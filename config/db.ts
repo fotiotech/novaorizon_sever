@@ -1,8 +1,13 @@
-// config/db.ts
 import mongoose from "mongoose";
 import { env } from "./env.js";
 
 let connectionPromise: Promise<typeof mongoose> | null = null;
+
+// If Mongo drops the connection (idle timeout, network blip),
+// clear the cached promise so the next request reconnects.
+mongoose.connection.on("disconnected", () => {
+  connectionPromise = null;
+});
 
 export async function connection(): Promise<void> {
   mongoose.set("strictQuery", true);
@@ -12,18 +17,20 @@ export async function connection(): Promise<void> {
     connectionPromise = mongoose
       .connect(env.mongodbUri, {
         dbName: env.mongodbDbName,
-        // --- SERVERLESS OPTIMIZATIONS ---
-        maxPoolSize: 5, // Keep the pool small (1-10 is recommended)[reference:7]
-        minPoolSize: 0, // Don't keep idle connections alive[reference:8]
-        maxIdleTimeMS: 10000, // Close idle connections quickly[reference:9]
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 45000,
+        // Serverless-appropriate pool — one warm instance ≠ one app server
+        maxPoolSize: 5,
+        minPoolSize: 0,
+        maxIdleTimeMS: 10_000,
+        serverSelectionTimeoutMS: 5_000,
+        socketTimeoutMS: 45_000,
       })
+      .then((m) => m)
       .catch((error) => {
         connectionPromise = null;
-        console.error("[MongoDB] connection failed");
+        console.error("[MongoDB] connection failed:", (error as Error).message);
         throw error;
       });
   }
+
   await connectionPromise;
 }
