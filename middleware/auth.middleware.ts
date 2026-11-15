@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifyToken } from "../utils/jwt.js";
 import { ForbiddenError, UnauthorizedError } from "./error.middleware.js";
+import type { AuthRequest } from "../types/auth.js";
 
 function readBearer(req: Request): string | null {
   const header = req.headers.authorization;
@@ -18,7 +19,7 @@ export function requireUser(
     if (!token) return next(new UnauthorizedError());
 
     const claims = verifyToken(token);
-    req.user = {
+    (req as AuthRequest).user = {
       id: claims.sub,
       role: claims.role,
       email: claims.email ?? null,
@@ -38,7 +39,9 @@ export function requireAdmin(
 ): void {
   requireUser(req, res, (err) => {
     if (err) return next(err);
-    if (req.user?.role !== "admin") return next(new ForbiddenError());
+    if ((req as AuthRequest).user?.role !== "admin") {
+      return next(new ForbiddenError());
+    }
     next();
   });
 }

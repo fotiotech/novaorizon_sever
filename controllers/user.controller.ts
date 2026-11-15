@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import User from "../models/User.js";
 import { connection } from "../config/db.js";
 import { AppError } from "../middleware/error.middleware.js";
+import { AuthRequest } from "../types/auth.js";
 
 const ALLOWED_ROLES = ["customer", "seller", "admin", "support"] as const;
 type AllowedRole = (typeof ALLOWED_ROLES)[number];
@@ -38,7 +39,8 @@ export async function updateUserRole(
       )
     : [];
 
-  if (req.user!.id === id && role !== "admin") {
+  const actor = (req as AuthRequest).user!;
+  if (actor.id === id && role !== "admin") {
     throw new AppError("You cannot remove your own admin role.", 400);
   }
 
@@ -86,8 +88,9 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
 
 export async function getMe(req: Request, res: Response): Promise<void> {
   await connection();
+  const userId = (req as AuthRequest).user!.id;
 
-  const user = await User.findById(req.user!.id)
+  const user = await User.findById(userId)
     .select(
       "name email image dateOfBirth gender phone phoneVerified preferences profileCompleted onboardingCompleted role status",
     )
@@ -137,7 +140,7 @@ export async function updateMe(req: Request, res: Response): Promise<void> {
   await connection();
 
   const payload = (req.body ?? {}) as UpdateMePayload;
-  const userId = req.user!.id;
+  const userId = (req as AuthRequest).user!.id;
   const update: Record<string, any> = {};
 
   if (payload.name !== undefined) update.name = payload.name;
