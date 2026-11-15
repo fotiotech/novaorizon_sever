@@ -1,0 +1,9 @@
+import { Router } from "express";
+import { login, signup } from "../controllers/auth.controller.js";
+import { requireAdmin } from "../middleware/auth.middleware.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+
+export const authRouter = Router();
+
+authRouter.post("/login", asyncHandler(login));
+authRouter.post("/signup", requireAdmin, asyncHandler(signup));
