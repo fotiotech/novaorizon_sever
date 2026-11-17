@@ -6,20 +6,25 @@ import {
   errorHandler,
   notFoundHandler,
 } from "./middleware/error.middleware.js";
+import cookieParser from "cookie-parser";
 
 export function createApp() {
   const app = express();
 
   app.set("trust proxy", 1);
+  app.use(cookieParser(env.cookieSecret));
 
+  const allowedOrigins =
+    env.corsOrigin === "*"
+      ? true
+      : env.corsOrigin.split(",").map((s) => s.trim());
   app.use(
     cors({
-      origin:
-        env.corsOrigin === "*"
-          ? true
-          : env.corsOrigin.split(",").map((s) => s.trim()),
+      origin: allowedOrigins,
+      credentials: true,
     }),
   );
+
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 

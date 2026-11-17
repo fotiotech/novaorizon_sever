@@ -12,7 +12,7 @@ export interface JwtClaims {
 
 export function signToken(
   claims: JwtClaims,
-  expiresIn: SignOptions["expiresIn"] = "7d",
+  expiresIn: SignOptions["expiresIn"] = env.jwtExpiresIn as SignOptions["expiresIn"],
 ): string {
   return jwt.sign(claims, env.jwtSecret, { expiresIn });
 }

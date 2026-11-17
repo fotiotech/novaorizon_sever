@@ -24,15 +24,32 @@ export class ForbiddenError extends AppError {
   }
 }
 
+/**
+ * Field-level validation error. Callers pass `{ field: string[] | undefined }`
+ * so conditional checks can be written inline:
+ *
+ *   throw new ValidationError({
+ *     name: name ? undefined : ["name required"],
+ *     email: email ? undefined : ["email required"],
+ *   });
+ *
+ * The `undefined` entries are filtered out at construction — the `fieldErrors`
+ * property is always `Record<string, string[]>` with only real errors.
+ */
 export class ValidationError extends AppError {
   fieldErrors: Record<string, string[]>;
+
   constructor(
-    fieldErrors: Record<string, string[]>,
+    fieldErrors: Record<string, string[] | undefined>,
     message = "Validation failed",
   ) {
     super(message, 400);
     this.name = "ValidationError";
-    this.fieldErrors = fieldErrors;
+    this.fieldErrors = Object.fromEntries(
+      Object.entries(fieldErrors).filter(
+        (entry): entry is [string, string[]] => entry[1] !== undefined,
+      ),
+    );
   }
 }
 
