@@ -160,10 +160,15 @@ export async function getMenusByLocation(
   }
   await connection();
 
+  // `.lean()` is required: spreading a hydrated Mongoose document copies its
+  // internals (`$__`, `_doc`, `$isNew`) instead of the data, which silently
+  // dropped `name`, `display`, `displayConfig`, `theme`, … from the payload.
   const menus = await Menu.find({
     location: location as MenuLocation,
     visible: { $ne: false },
-  });
+  })
+    .sort({ order: 1, createdAt: -1 })
+    .lean();
 
   const enriched = await Promise.all(
     menus.map(async (menu: any) => ({
