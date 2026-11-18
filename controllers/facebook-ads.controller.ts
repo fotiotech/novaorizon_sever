@@ -1,4 +1,9 @@
-import type { Request, Response } from "express";
+// Express types are aliased so they cannot shadow the Fetch API's global
+// `Request`/`Response` (the production/ Vercel TS build includes DOM libs).
+import type {
+  Request as ExpressRequest,
+  Response as ExpressResponse,
+} from "express";
 import Product from "../models/Product.js";
 import { connection } from "../config/db.js";
 import {
@@ -31,8 +36,8 @@ const SITE_URL =
 /* ---------------------------- validation -------------------------------- */
 
 export async function validateFacebookAdsConnection(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const parsed = FacebookAdsConnectionSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -57,8 +62,8 @@ export async function validateFacebookAdsConnection(
  * (useful for display-only tooling that needs to confirm what's stored).
  */
 export async function getFacebookAdsSettings(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const raw = req.query.raw === "true";
   const settings = await getSecret();
@@ -74,16 +79,16 @@ export async function getFacebookAdsSettings(
  * Used by the settings page in the admin UI.
  */
 export async function loadFacebookAdsSettings(
-  _req: Request,
-  res: Response,
+  _req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings = await getSecret();
   res.json({ data: settings ? maskSecrets(settings) : null });
 }
 
 export async function saveFacebookAdsSettings(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const input = req.body ?? {};
   const existing = (await getSecret()) ?? {};
@@ -128,8 +133,8 @@ export async function saveFacebookAdsSettings(
 /* ---------------------------- sync endpoints ---------------------------- */
 
 export async function syncFacebookCampaigns(
-  _req: Request,
-  res: Response,
+  _req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   if (!settings) {
@@ -163,8 +168,8 @@ export async function syncFacebookCampaigns(
 }
 
 export async function syncFacebookAdSets(
-  _req: Request,
-  res: Response,
+  _req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   if (!settings) {
@@ -194,8 +199,8 @@ export async function syncFacebookAdSets(
 }
 
 export async function syncFacebookCatalogProducts(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   if (!settings) {
@@ -283,8 +288,8 @@ const OBJECTIVE_MAP: Record<string, string> = {
 const STATUS_MAP = { ACTIVE: 1, PAUSED: 2 } as const;
 
 export async function createFacebookCampaign(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   if (!settings) {
@@ -333,8 +338,8 @@ export async function createFacebookCampaign(
 }
 
 export async function createFacebookAdSet(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   if (!settings) {
@@ -398,8 +403,8 @@ export async function createFacebookAdSet(
 }
 
 export async function createFacebookAdCreative(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   if (!settings) {
@@ -469,8 +474,8 @@ export async function createFacebookAdCreative(
 }
 
 export async function createFacebookAd(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   if (!settings) {
@@ -530,8 +535,8 @@ function parseInsights(data: any) {
 }
 
 export async function getCampaignInsights(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   const campaignId = req.params.campaignId;
@@ -580,8 +585,8 @@ export async function getCampaignInsights(
 }
 
 export async function getAdSetInsights(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const settings: any = await getSecret();
   const adSetId = req.params.adSetId;

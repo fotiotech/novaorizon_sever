@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "sourceMap": false,
+    "incremental": false,
+    // Vercel's @vercel/node build type-checks with DOM libs available. Mirror
+    // that here so a green local build means a green production build (this is
+    // what caught the express `Response` shadowing the Fetch API `Response`).
+    "lib": ["ES2022", "DOM"]
+  },
+  "exclude": ["node_modules", "dist"]
+}

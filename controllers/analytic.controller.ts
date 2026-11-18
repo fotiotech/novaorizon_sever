@@ -1,4 +1,9 @@
-import type { Request, Response } from "express";
+// Express types are aliased so they cannot shadow the Fetch API's global
+// `Request`/`Response` (the production/ Vercel TS build includes DOM libs).
+import type {
+  Request as ExpressRequest,
+  Response as ExpressResponse,
+} from "express";
 import Order from "../models/Order.js";
 import User from "../models/User.js";
 import Product from "../models/Product.js";
@@ -15,8 +20,8 @@ import {
 /* --------------------------- user analytics ----------------------------- */
 
 export async function getUserAnalytics(
-  _req: Request,
-  res: Response,
+  _req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   await connection();
 
@@ -109,8 +114,8 @@ export async function getUserAnalytics(
 /* --------------------------- order analytics ---------------------------- */
 
 export async function getOrderAnalytics(
-  _req: Request,
-  res: Response,
+  _req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   await connection();
 
@@ -157,8 +162,8 @@ export async function getOrderAnalytics(
 /* -------------------------- product analytics --------------------------- */
 
 export async function getProductAnalytics(
-  _req: Request,
-  res: Response,
+  _req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   await connection();
 
@@ -253,8 +258,8 @@ export async function getProductAnalytics(
 /* ------------------------- facebook ads analytics ----------------------- */
 
 export async function getFacebookAdsAnalytics(
-  _req: Request,
-  res: Response,
+  _req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   await connection();
 
@@ -280,7 +285,9 @@ export async function getFacebookAdsAnalytics(
 
   try {
     const url = `https://graph.facebook.com/${settings.apiVersion || "v20.0"}/${settings.adAccountId}/insights?fields=spend,impressions,clicks,actions&access_token=${encodeURIComponent(settings.accessToken)}`;
-    const response = await fetch(url, { method: "GET" });
+    // Explicitly typed: some CI/production TS setups resolve the Fetch API
+    // `Response` to the Express one, so the shape is pinned here.
+    const response: any = await fetch(url, { method: "GET" });
 
     if (!response?.ok) {
       res.json({
@@ -358,8 +365,8 @@ export async function getFacebookAdsAnalytics(
 /* --------------------------- overview data ------------------------------ */
 
 export async function getOverviewData(
-  _req: Request,
-  res: Response,
+  _req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   await connection();
 
@@ -468,8 +475,8 @@ export async function getOverviewData(
 }
 
 export async function getHotAnalytics(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const windowMinutes = Math.min(
     120,
@@ -481,8 +488,8 @@ export async function getHotAnalytics(
 }
 
 export async function getHistoryAnalytics(
-  req: Request,
-  res: Response,
+  req: ExpressRequest,
+  res: ExpressResponse,
 ): Promise<void> {
   const period = String(req.query.period ?? "day") as "day" | "week" | "month";
   if (!["day", "week", "month"].includes(period)) {
