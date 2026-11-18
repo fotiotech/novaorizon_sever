@@ -29,6 +29,36 @@ function getS3Client(): S3Client {
   return _s3Client;
 }
 
+/**
+ * Reduce a user-supplied path fragment to a safe S3 key prefix segment.
+ * - splits on / or \,
+ * - drops "." and "..",
+ * - strips anything outside [A-Za-z0-9_-],
+ * - re-joins surviving non-empty segments with "/".
+ *
+ * `"categories/../../etc"` → `"categories/etc"`
+ * `"ABC/../passwd"`        → `"ABC/passwd"`
+ * `" products "`           → `"products"`
+ */
+function sanitizeSegment(input: string | undefined): string {
+  if (!input) return "";
+  return input
+    .split(/[/\\]+/)
+    .map((seg) => seg.trim())
+    .filter((seg) => seg && seg !== "." && seg !== "..")
+    .map((seg) => seg.replace(/[^A-Za-z0-9_-]/g, ""))
+    .filter(Boolean)
+    .join("/");
+}
+
+/** Reduce `originalname` to a safe basename with the extension preserved. */
+function sanitizeFilename(name: string | undefined): string {
+  if (!name) return "file";
+  const base = name.split(/[/\\]/).pop() || "file";
+  const cleaned = base.replace(/[^A-Za-z0-9._-]/g, "_");
+  return cleaned || "file";
+}
+
 export async function uploadToS3(req: Request, res: Response): Promise<void> {
   if (!req.file) throw new ValidationError({ file: ["No file provided"] });
   if (!env.awsBucketName || !env.awsRegion) {
@@ -36,7 +66,16 @@ export async function uploadToS3(req: Request, res: Response): Promise<void> {
   }
 
   const file = req.file;
-  const fileKey = `uploads/${uuidv4()}-${file.originalname}`;
+
+  // Both fields are optional; multer places non-file form fields on req.body.
+  const instanceId = sanitizeSegment(String(req.body?.instanceId ?? ""));
+  const subfolder = sanitizeSegment(String(req.body?.subfolder ?? ""));
+  const filename = sanitizeFilename(file.originalname);
+
+  // {instanceId}/{subfolder}/uploads/{uuid}-{filename}
+  // Missing segments are dropped entirely.
+  const prefix = [instanceId, subfolder].filter(Boolean).join("/");
+  const fileKey = `${prefix ? `${prefix}/` : ""}uploads/${uuidv4()}-${filename}`;
 
   try {
     await getS3Client().send(
@@ -48,8 +87,6 @@ export async function uploadToS3(req: Request, res: Response): Promise<void> {
       }),
     );
 
-    // Build a public URL. If the bucket isn't public, this URL will 403 —
-    // adjust per your CloudFront / bucket-policy setup.
     const url = `https://${env.awsBucketName}.s3.${env.awsRegion}.amazonaws.com/${fileKey}`;
 
     res.status(201).json({ success: true, data: { fileKey, url } });

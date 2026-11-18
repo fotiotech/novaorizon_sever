@@ -44,9 +44,11 @@ import { collectionRouter } from "./collection.routes.js";
 import { monetbilRouter } from "./monetbil.routes.js";
 import { eventRouter } from "./event.routes.js";
 import { notificationRouter } from "./notification.routes.js";
+import { catalogRouter } from "./catalog.routes.js";
 
 export const apiRouter = Router();
 
+apiRouter.use("/catalog", catalogRouter); // public storefront catalogue
 apiRouter.use("/addresses", addressRouter);
 apiRouter.use("/attributes", attributeRouter);
 apiRouter.use("/attribute-groups", attributeGroupRouter);
