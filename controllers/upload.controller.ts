@@ -4,6 +4,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
 import { env } from "../config/env.js";
 import { ValidationError } from "../middleware/error.middleware.js";
+import { deleteS3Object } from "../utils/s3.js";
 
 /**
  * `memoryStorage` — file lives in RAM, we upload directly to S3.
@@ -94,4 +95,22 @@ export async function uploadToS3(req: Request, res: Response): Promise<void> {
     console.error("[upload] S3 failed:", err);
     throw new Error("Failed to upload file");
   }
+}
+/* --------------------------- delete one object --------------------------- */
+
+/**
+ * DELETE /api/upload/s3?key=<key|url>
+ *
+ * Generic cleanup used by the admin UI when an upload is replaced or a form
+ * is abandoned. Accepts an S3 key or a full object URL.
+ */
+export async function deleteS3Upload(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const key = String(req.query.key ?? req.body?.key ?? "").trim();
+  if (!key) throw new ValidationError({ key: ["key is required"] });
+
+  await deleteS3Object(key);
+  res.json({ success: true });
 }

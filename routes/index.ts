@@ -45,10 +45,19 @@ import { monetbilRouter } from "./monetbil.routes.js";
 import { eventRouter } from "./event.routes.js";
 import { notificationRouter } from "./notification.routes.js";
 import { catalogRouter } from "./catalog.routes.js";
+import { cronRouter } from "./cron.routes.js";
+import { checkoutRouter } from "./checkout.routes.js";
+import { financeRouter } from "./finance.routes.js";
+import { customerRouter, reviewRouter } from "./customer.routes.js";
 
 export const apiRouter = Router();
 
 apiRouter.use("/catalog", catalogRouter); // public storefront catalogue
+apiRouter.use("/cron", cronRouter);
+apiRouter.use("/checkout", checkoutRouter);
+apiRouter.use("/customers", customerRouter);
+apiRouter.use("/finance", financeRouter);
+apiRouter.use("/reviews", reviewRouter);
 apiRouter.use("/addresses", addressRouter);
 apiRouter.use("/attributes", attributeRouter);
 apiRouter.use("/attribute-groups", attributeGroupRouter);

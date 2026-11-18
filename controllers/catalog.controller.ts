@@ -1,6 +1,11 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Product from "../models/Product.js";
+import Brand from "../models/Brand.js";
+import Carrier from "../models/Carrier.js";
+import { Block } from "../models/Block.js";
+import { resolveBlock } from "../utils/block-resolve.js";
+import { BLOCK_LOCATIONS } from "../config/content.constants.js";
 import "../models/Brand.js";
 import "../models/Category.js";
 import "../models/Attribute.js";
@@ -154,4 +159,103 @@ export async function listRelatedProducts(
     .lean();
 
   res.json({ data: JSON.parse(JSON.stringify(related)) });
+}
+/* ------------------------------- brands ---------------------------------- */
+
+export async function listPublicBrands(
+  _req: Request,
+  res: Response,
+): Promise<void> {
+  await connection();
+
+  const brands = await Brand.find({ status: { $ne: "inactive" } })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  res.json({ data: JSON.parse(JSON.stringify(brands)) });
+}
+
+export async function listPublicBrandProducts(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  await connection();
+
+  const id = asString(req.params.id);
+  if (!id || !validObjectId(id)) {
+    throw new ValidationError({ id: ["Invalid brand id"] });
+  }
+
+  const products = await Product.find({
+    brand: new mongoose.Types.ObjectId(id),
+    status: { $nin: HIDDEN_STATUSES },
+  })
+    .select(`${LIST_FIELDS} description shortDescription`)
+    .sort({ createdAt: -1 })
+    .lean();
+
+  res.json({ data: JSON.parse(JSON.stringify(products)) });
+}
+/* ------------------------------ carriers --------------------------------- */
+
+/** Public carrier list — contact details are omitted. */
+export async function listPublicCarriers(
+  _req: Request,
+  res: Response,
+): Promise<void> {
+  await connection();
+
+  const carriers = await Carrier.find().sort({ name: 1 }).lean();
+
+  res.json({
+    data: carriers.map((c: any) => ({
+      _id: String(c._id),
+      name: c.name,
+      regionsServed: c.regionsServed ?? [],
+      costWeight: c.costWeight ?? 0,
+    })),
+  });
+}
+/* ------------------------------- blocks ---------------------------------- */
+
+/**
+ * GET /api/catalog/blocks?location=Home
+ *
+ * Returns the *resolved* blocks for a storefront location: items and banners
+ * are expanded server-side so the frontend only has to render them.
+ */
+export async function listResolvedBlocks(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const location = String(req.query.location ?? "");
+  if (!BLOCK_LOCATIONS.includes(location as any)) {
+    throw new ValidationError({ location: ["Invalid block location"] });
+  }
+
+  await connection();
+
+  const docs = await Block.find({
+    location: location as "Home" | "ProductRelated",
+    status: "active",
+  })
+    .sort({ order: 1, created_at: -1 })
+    .lean();
+
+  const resolved = await Promise.all(
+    docs.map((doc: any) =>
+      resolveBlock(doc, { userId: req.user?.id }).catch((err) => {
+        console.error("[blocks] resolve failed:", doc._id, err);
+        return null;
+      }),
+    ),
+  );
+
+  const blocks = resolved.filter(
+    (r: any) =>
+      r !== null &&
+      ((r.items?.length ?? 0) > 0 || (r.banners?.length ?? 0) > 0),
+  );
+
+  res.json({ data: JSON.parse(JSON.stringify(blocks)) });
 }

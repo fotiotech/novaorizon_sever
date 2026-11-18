@@ -42,10 +42,24 @@ export interface IOrderAddress {
   carrier?: string | null;
 }
 
+export interface IAppliedPromotion {
+  promotionId: Types.ObjectId;
+  name?: string | null;
+  code?: string | null;
+  discount: number;
+  calculationType?: string | null;
+}
+
 export interface IOrder {
   orderNumber: string;
   transaction_id?: string | null;
-  userId: Types.ObjectId;
+  /** Null for guest checkouts — `guestId` identifies those. */
+  userId?: Types.ObjectId | null;
+  guestId?: string | null;
+  idempotencyKey?: string | null;
+  paymentGateway?: string | null;
+  paymentReference?: string | null;
+  appliedPromotions?: IAppliedPromotion[];
   email: string;
   firstName: string;
   lastName: string;
@@ -111,9 +125,28 @@ const OrderSchema = new Schema<IOrder, OrderModel>(
     userId: {
       type: Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
+      default: null,
       index: true,
     },
+    guestId: { type: String, default: null, index: true },
+    idempotencyKey: { type: String, index: true, sparse: true },
+    paymentGateway: { type: String, default: null },
+    paymentReference: { type: String, default: null },
+    appliedPromotions: [
+      {
+        _id: false,
+        promotionId: {
+          type: Schema.Types.ObjectId,
+          ref: "Promotion",
+          required: true,
+        },
+        name: { type: String, default: null },
+        code: { type: String, default: null },
+        discount: { type: Number, default: 0 },
+        calculationType: { type: String, default: null },
+      },
+    ],
     email: { type: String, required: true },
     firstName: { type: String, required: true },
     lastName: { type: String, required: true },

@@ -3,6 +3,11 @@ import Product from "../models/Product.js";
 import "../models/Brand.js";
 import "../models/Category.js";
 import { connection } from "../config/db.js";
+import {
+  autocompleteProducts,
+  searchProducts,
+  semanticSearch,
+} from "../utils/search.service.js";
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -115,4 +120,45 @@ async function generateFilters(safeQuery: string) {
     console.error("[search filters]", err);
     return { categories: [], brands: [], priceRange: { min: 0, max: 0 } };
   }
+}
+/* --------------------------- Atlas text search -------------------------- */
+
+/** POST /api/search/products — compound text search + facets. */
+export async function postSearchProducts(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const body = req.body ?? {};
+  const result = await searchProducts(
+    String(body.query ?? ""),
+    Array.isArray(body.filters) ? body.filters : [],
+    Number(body.page) || 1,
+    Number(body.size) || 20,
+  );
+  res.json({ data: result });
+}
+
+/** POST /api/search/semantic — Voyage embeddings + $vectorSearch. */
+export async function postSemanticSearch(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const body = req.body ?? {};
+  const result = await semanticSearch(
+    String(body.query ?? ""),
+    body.filters ?? {},
+    Number(body.limit) || 20,
+  );
+  res.json({ data: result });
+}
+
+/** GET /api/search/autocomplete?q=&limit= */
+export async function getAutocomplete(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const q = String(req.query.q ?? req.query.query ?? "");
+  const limit = Number(req.query.limit) || 8;
+  const results = await autocompleteProducts(q, limit);
+  res.json({ data: results });
 }

@@ -9,14 +9,14 @@ import {
   updateCartItem,
 } from "../controllers/cart.controller.js";
 import { cartSession } from "../middleware/cart-session.middleware.js";
-import { requireUser } from "../middleware/auth.middleware.js";
+import { optionalUser, requireUser } from "../middleware/auth.middleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export const cartRouter = Router();
 
 // Every cart request gets a stable guest-session cookie. Auth is optional —
 // `getIdentifier()` picks userId when present, sessionId otherwise.
-cartRouter.use(cartSession);
+cartRouter.use(optionalUser, cartSession);
 
 cartRouter.get("/", asyncHandler(getCart));
 cartRouter.post("/items", asyncHandler(addToCart));

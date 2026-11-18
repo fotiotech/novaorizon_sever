@@ -17,6 +17,7 @@ import { getEntityConfig, type RegistryKey } from "../utils/entity-registry.js";
 import { getRecommendationResolver } from "../utils/recommendation-resolvers.js";
 import { deleteS3Object } from "../utils/s3.js";
 import { connection } from "../config/db.js";
+import { normalizeContentItem } from "../utils/content-resolve.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 
 function param(req: Request, key: string): string {
@@ -150,6 +151,11 @@ export async function getResolvedCollections(
   if (targetType) filter.targetType = targetType;
   if (status) filter.status = status;
 
+  const id = String(req.query.id ?? "").trim();
+  if (id && mongoose.Types.ObjectId.isValid(id)) {
+    filter._id = new mongoose.Types.ObjectId(id);
+  }
+
   const docs = await Collection.find(filter)
     .sort({ order: 1, created_at: -1 })
     .populate("items")
@@ -202,7 +208,9 @@ export async function getResolvedCollections(
           created_at: c.created_at,
           updated_at: c.updated_at,
         },
-        items,
+        items: items.map((item: any) =>
+          normalizeContentItem(item, c.targetType as any),
+        ),
         itemCount: items.length,
         isDynamic: c.type === "recommendation",
       };

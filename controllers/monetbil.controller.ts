@@ -1,28 +1,20 @@
 import type { Request, Response } from "express";
 import axios from "axios";
 import Order from "../models/Order.js";
-import Shipping from "../models/Shipping.js";
 import { connection } from "../config/db.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 import type { MonetbilPaymentRequest } from "../config/monetbil.types.js";
+import { checkMonetbilPayment } from "../utils/monetbil.js";
+import {
+  markOrderFailed,
+  markOrderPaid,
+} from "../utils/order-service.js";
 
 /**
  * Monetbil sends raw status values that don't match Order.paymentStatus enum.
  * The original passed `status` directly — silently persisting out-of-enum
  * values into `paymentStatus`. This maps to valid enum members.
  */
-const MONETBIL_STATUS_MAP: Record<
-  string,
-  "pending" | "paid" | "failed" | "cancelled"
-> = {
-  success: "paid",
-  paid: "paid",
-  failed: "failed",
-  cancelled: "cancelled",
-  canceled: "cancelled",
-  pending: "pending",
-  pending_payment: "pending",
-};
 
 /* ---------------------------- create link ------------------------------- */
 
@@ -78,64 +70,6 @@ export async function generatePaymentLink(
   }
 }
 
-/* ---------------------------- update order ------------------------------ */
-
-async function updateOrderStatusFromMonetbil(
-  payment_ref: string,
-  transaction_id: string,
-  rawStatus: string,
-): Promise<void> {
-  const mapped = MONETBIL_STATUS_MAP[rawStatus];
-  if (!mapped) {
-    console.warn(
-      `[monetbil] unknown status "${rawStatus}" for ref ${payment_ref}`,
-    );
-    return;
-  }
-
-  const savedOrder = await Order.findOneAndUpdate(
-    { orderNumber: payment_ref },
-    {
-      $set: {
-        transaction_id,
-        paymentStatus: mapped,
-        ...(mapped === "paid" ? { paidAt: new Date() } : {}),
-      },
-    },
-    { new: true, runValidators: true },
-  );
-  if (!savedOrder) {
-    console.warn(
-      `[monetbil] order ${payment_ref} not found — status not applied`,
-    );
-    return;
-  }
-
-  // BUG FIXED: original created Shipping when paymentStatus === "cancelled",
-  // which is backwards. Shipping is created for PAID orders.
-  if (mapped === "paid") {
-    const existing = await Shipping.findOne({ orderId: savedOrder._id }).lean();
-    if (!existing) {
-      await new Shipping({
-        orderId: savedOrder._id,
-        userId: savedOrder.userId,
-        address: {
-          street: savedOrder.shippingAddress.street,
-          city: savedOrder.shippingAddress.city,
-          region: savedOrder.shippingAddress.region,
-          address: savedOrder.shippingAddress.address,
-          country: savedOrder.shippingAddress.country,
-        },
-        carrier: savedOrder.shippingAddress.carrier || "Novaorizon",
-        shippingMethod: "standard",
-        trackingNumber: savedOrder.orderNumber,
-        shippingCost: savedOrder.shippingCost || 0,
-        status: "processing",
-      }).save();
-    }
-  }
-}
-
 /* --------------------------- webhook handler ---------------------------- */
 
 export async function handlePaymentNotification(
@@ -143,30 +77,68 @@ export async function handlePaymentNotification(
   res: Response,
 ): Promise<void> {
   // Monetbil sends params in either the query string (GET) or the body (POST).
-  // `req.query` + `req.body` covers both.
   const params: Record<string, any> = { ...req.query, ...(req.body ?? {}) };
 
-  const transaction_id = String(params.transaction_id ?? "");
-  const status = String(params.status ?? "");
-  const payment_ref = String(params.payment_ref ?? params.item_ref ?? "");
+  // Optional shared-secret guard (set MONETBIL_NOTIFY_TOKEN to enable).
+  const notifyToken = process.env.MONETBIL_NOTIFY_TOKEN;
+  if (notifyToken) {
+    const supplied = String(params.token ?? params.key ?? "");
+    if (supplied !== notifyToken) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  }
 
-  if (!transaction_id || !status || !payment_ref) {
-    res.status(400).json({ error: "Invalid notification data" });
+  const paymentId = String(
+    params.paymentId ?? params.payment_id ?? params.transaction_id ?? "",
+  );
+  const orderNumber = String(
+    params.payment_ref ?? params.item_ref ?? params.orderNumber ?? "",
+  );
+
+  if (!paymentId || !orderNumber) {
+    res.status(400).json({ error: "Missing parameters" });
     return;
   }
 
-  // NOTE: The original did not verify the request. Monetbil publishes an HMAC
-  // signature in `sign`. If you want to enforce it:
-  //   const expected = crypto.createHmac("sha512", env.monetbilSecret).update(...).digest("hex");
-  //   if (params.sign !== expected) return res.status(401).json({ error: "Invalid signature" });
-  // TODO: wire this before going to production.
+  await connection();
 
-  try {
-    await connection();
-    await updateOrderStatusFromMonetbil(payment_ref, transaction_id, status);
-    res.json({ message: "Notification processed" });
-  } catch (err) {
-    console.error("[monetbil] notification handler error:", err);
-    res.status(500).json({ error: "Internal Server Error" });
+  const order: any = await Order.findOne({ orderNumber }).lean();
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
   }
+
+  const transaction = await checkMonetbilPayment(paymentId);
+  if (!transaction) {
+    res.status(502).json({ error: "Payment could not be verified" });
+    return;
+  }
+
+  if (transaction.status !== 1) {
+    if (transaction.status === 0 || transaction.status === -1) {
+      await markOrderFailed(orderNumber, "Monetbil payment failed or cancelled");
+    }
+    res.json({ ok: false, status: transaction.status });
+    return;
+  }
+
+  if (transaction.payment_ref && transaction.payment_ref !== order.orderNumber) {
+    res.status(400).json({ error: "Payment reference mismatch" });
+    return;
+  }
+
+  const result = await markOrderPaid(orderNumber, {
+    gateway: "monetbil",
+    transactionId: paymentId,
+    amount: transaction.amount,
+    currency: transaction.currency,
+  });
+
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+
+  res.json({ ok: true, alreadyPaid: result.alreadyPaid });
 }

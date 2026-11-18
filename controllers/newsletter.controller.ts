@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import crypto from "node:crypto";
 import mongoose from "mongoose";
 import NewsletterSubscriber from "../models/NewsletterSubscriber.js";
+import User from "../models/User.js";
 import { connection } from "../config/db.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 import { consumeRateLimit, getClientIp } from "../utils/rate-limit.js";
@@ -70,17 +71,24 @@ export async function subscribeToNewsletter(
   res.status(201).json({ success: true, message: "Thanks for subscribing!" });
 }
 
-/* ------------------------- PUBLIC: unsubscribe -------------------------- */
+/* ------------------------ PUBLIC: unsubscribe --------------------------- */
 
 export async function unsubscribeFromNewsletter(
   req: Request,
   res: Response,
 ): Promise<void> {
-  await connection();
-  const token = param(req, "token");
-  if (!token) throw new ValidationError({ token: ["required"] });
+  const token = String(
+    req.params?.token ?? req.body?.token ?? req.query.token ?? "",
+  ).trim();
+  if (!token) {
+    throw new ValidationError({ token: ["Unsubscribe token is required"] });
+  }
 
-  const sub = await NewsletterSubscriber.findOne({ unsubscribeToken: token });
+  await connection();
+
+  const sub: any = await NewsletterSubscriber.findOne({
+    unsubscribeToken: token,
+  });
   if (!sub) throw new AppError("Invalid or expired unsubscribe link.", 404);
 
   if (sub.status === "unsubscribed") {
@@ -91,10 +99,23 @@ export async function unsubscribeFromNewsletter(
   sub.status = "unsubscribed";
   sub.unsubscribedAt = new Date();
   await sub.save();
+
+  // Keep the user's marketing preference aligned with the subscription.
+  if (sub.userId) {
+    try {
+      await User.updateOne(
+        { _id: sub.userId },
+        { $set: { "preferences.marketing.email": false } },
+      );
+    } catch (err) {
+      console.error("[unsubscribeFromNewsletter] user sync failed:", err);
+    }
+  }
+
   res.json({ success: true, message: "You've been unsubscribed." });
 }
 
-/* --------------------------- ADMIN: list ------------------------------- */
+/* ------------------------------ ADMIN: list ----------------------------- */
 
 export async function getNewsletterSubscribers(
   req: Request,
@@ -108,6 +129,7 @@ export async function getNewsletterSubscribers(
     page = "1",
     limit = "20",
   } = req.query as Record<string, string | undefined>;
+
   const pageNum = Math.max(1, Number(page) || 1);
   const limitNum = Math.min(100, Math.max(1, Number(limit) || 20));
   const skip = (pageNum - 1) * limitNum;
@@ -116,14 +138,15 @@ export async function getNewsletterSubscribers(
   if (status && status !== "all") query.status = status;
   if (search) query.email = new RegExp(search, "i");
 
-  const [subscribers, total, subscribed, unsubscribed, bounced] =
+  const [subscribers, total, all, subscribed, unsubscribed, bounced] =
     await Promise.all([
       NewsletterSubscriber.find(query)
-        .sort({ createdAt: -1 })
+        .sort({ subscribedAt: -1, createdAt: -1 })
         .skip(skip)
         .limit(limitNum)
         .lean(),
       NewsletterSubscriber.countDocuments(query),
+      NewsletterSubscriber.countDocuments({}),
       NewsletterSubscriber.countDocuments({ status: "subscribed" }),
       NewsletterSubscriber.countDocuments({ status: "unsubscribed" }),
       NewsletterSubscriber.countDocuments({ status: "bounced" }),
@@ -131,65 +154,67 @@ export async function getNewsletterSubscribers(
 
   res.json({
     data: {
-      subscribers: subscribers.map((s: any) => ({
-        ...s,
-        _id: s._id.toString(),
-        createdAt: s.createdAt?.toISOString?.() ?? s.createdAt,
-        subscribedAt: s.subscribedAt?.toISOString?.() ?? s.subscribedAt,
-        unsubscribedAt:
-          s.unsubscribedAt?.toISOString?.() ?? s.unsubscribedAt ?? null,
-      })),
+      subscribers: JSON.parse(JSON.stringify(subscribers)),
       total,
-      totalPages: Math.ceil(total / limitNum),
+      totalPages: Math.max(1, Math.ceil(total / limitNum)),
       currentPage: pageNum,
-      counts: {
-        all: subscribed + unsubscribed + bounced,
-        subscribed,
-        unsubscribed,
-        bounced,
-      },
+      counts: { all, subscribed, unsubscribed, bounced },
     },
   });
 }
 
-export async function deleteNewsletterSubscriber(
-  req: Request,
-  res: Response,
-): Promise<void> {
-  await connection();
-  const id = param(req, "id");
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw new ValidationError({ id: ["Invalid ID"] });
-  }
-  const deleted = await NewsletterSubscriber.findByIdAndDelete(id);
-  if (!deleted) throw new AppError("Subscriber not found", 404);
-  res.json({ success: true });
-}
+/* ---------------------------- ADMIN: export ----------------------------- */
 
 export async function exportNewsletterCsv(
   _req: Request,
   res: Response,
 ): Promise<void> {
   await connection();
-  const subs = await NewsletterSubscriber.find({ status: "subscribed" })
-    .sort({ subscribedAt: -1 })
+
+  const subscribers = await NewsletterSubscriber.find({})
+    .sort({ subscribedAt: -1, createdAt: -1 })
     .lean();
 
-  const rows = [
-    ["email", "status", "source", "subscribedAt"],
-    ...subs.map((s: any) => [
+  const escape = (value: unknown) => {
+    const s = String(value ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const header = ["email", "status", "source", "subscribedAt", "unsubscribedAt"];
+  const rows = subscribers.map((s: any) =>
+    [
       s.email,
       s.status,
-      s.source || "",
+      s.source ?? "",
       s.subscribedAt ? new Date(s.subscribedAt).toISOString() : "",
-    ]),
-  ];
+      s.unsubscribedAt ? new Date(s.unsubscribedAt).toISOString() : "",
+    ]
+      .map(escape)
+      .join(","),
+  );
 
-  const csv = rows
-    .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="newsletter-subscribers.csv"',
+  );
+  res.send([header.join(","), ...rows].join("\n"));
+}
 
-  res.setHeader("Content-Type", "text/csv");
-  res.setHeader("Content-Disposition", 'attachment; filename="newsletter.csv"');
-  res.send(csv);
+/* ---------------------------- ADMIN: delete ----------------------------- */
+
+export async function deleteNewsletterSubscriber(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const id = param(req, "id");
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new ValidationError({ id: ["Invalid subscriber id"] });
+  }
+
+  await connection();
+  const deleted = await NewsletterSubscriber.findByIdAndDelete(id);
+  if (!deleted) throw new AppError("Subscriber not found", 404);
+
+  res.json({ success: true });
 }
