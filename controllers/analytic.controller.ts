@@ -282,7 +282,7 @@ export async function getFacebookAdsAnalytics(
     const url = `https://graph.facebook.com/${settings.apiVersion || "v20.0"}/${settings.adAccountId}/insights?fields=spend,impressions,clicks,actions&access_token=${encodeURIComponent(settings.accessToken)}`;
     const response = await fetch(url, { method: "GET" });
 
-    if (!response.ok) {
+    if (!response?.ok) {
       res.json({
         data: {
           totalSpend: 0,
@@ -299,7 +299,7 @@ export async function getFacebookAdsAnalytics(
       return;
     }
 
-    const payload: any = await response.json();
+    const payload: any = await response?.json();
     const data = Array.isArray(payload.data) ? payload.data[0] : null;
 
     if (!data) {
