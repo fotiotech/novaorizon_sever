@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import crypto from "node:crypto";
 import User from "../models/User.js";
 import { connection } from "../config/db.js";
-import { env, isProd } from "../config/env.js";
+import { env } from "../config/env.js";
 import {
   AppError,
   ForbiddenError,
@@ -13,30 +13,11 @@ import { SigninSchema, SignupSchema } from "../schemas/auth.schema.js";
 import { signToken } from "../utils/jwt.js";
 import { consumeRateLimit, getClientIp } from "../utils/rate-limit.js";
 import type { AppRole } from "../types/auth.js";
-
-const SESSION_COOKIE = "session";
-
-/**
- * Cookie lifetime. Matches the default `JWT_EXPIRES_IN=30d`.
- *
- * If you ever shorten `JWT_EXPIRES_IN`, the token will expire before
- * the cookie does — that's fine (the JWT is verified on every request),
- * but the user gets 401'd on requests past the token's life. Either
- * keep both at 30d or add a `/auth/refresh` endpoint that mints a new
- * token while the cookie is still valid.
- */
-const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-
-function cookieOptions(maxAgeMs: number = COOKIE_MAX_AGE_MS) {
-  return {
-    httpOnly: true,
-    sameSite: "lax" as const,
-    secure: isProd,
-    domain: env.cookieDomain || undefined,
-    path: "/",
-    maxAge: maxAgeMs,
-  };
-}
+import {
+  cookieOptions,
+  resolveAudience,
+  sessionCookieName,
+} from "../utils/auth-cookies.js";
 
 /* ------------------------------ Login ----------------------------------- */
 
@@ -81,8 +62,9 @@ export async function login(req: Request, res: Response): Promise<void> {
     env.jwtExpiresIn as Parameters<typeof signToken>[1],
   );
 
-  // Browser path: httpOnly cookie. API clients ignore it.
-  res.cookie(SESSION_COOKIE, token, cookieOptions());
+  // Browser path: httpOnly cookie, scoped to this app's audience so an admin
+  // login cannot replace the storefront session.
+  res.cookie(sessionCookieName(resolveAudience(req)), token, cookieOptions());
   // API path: token in the body for `Authorization: Bearer …` consumers.
   res.json({
     data: {
@@ -100,11 +82,10 @@ export async function login(req: Request, res: Response): Promise<void> {
 
 /* ------------------------------ Logout ---------------------------------- */
 
-export async function logout(_req: Request, res: Response): Promise<void> {
-  // clearCookie must use the same options (path, domain) as when it was
-  // set, or the browser won't match the existing cookie. httpOnly and
-  // secure don't affect matching but are harmless to pass.
-  res.clearCookie(SESSION_COOKIE, cookieOptions());
+export async function logout(req: Request, res: Response): Promise<void> {
+  // Only clear the session for the app that asked; the other app's session
+  // stays intact. clearCookie needs the same path/domain as the original.
+  res.clearCookie(sessionCookieName(resolveAudience(req)), cookieOptions());
   res.json({ success: true });
 }
 
@@ -224,7 +205,7 @@ export async function signup(req: Request, res: Response): Promise<void> {
     env.jwtExpiresIn as Parameters<typeof signToken>[1],
   );
 
-  res.cookie(SESSION_COOKIE, token, cookieOptions());
+  res.cookie(sessionCookieName("client"), token, cookieOptions());
   res.status(201).json({
     success: true,
     message:

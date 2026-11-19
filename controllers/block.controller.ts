@@ -13,19 +13,15 @@ import {
   BLOCK_SOURCE_TYPES,
   PROMOTION_MODES,
   BLOCK_REF_MODELS,
-  BLOCK_THEMES,
-  BLOCK_ANIMATIONS,
-  BLOCK_ALIGNMENTS,
   CTA_STYLES,
-  CARD_SHAPES,
-  CARD_RATIOS,
-  CARD_SIZES,
-  CARD_LAYOUTS,
-  TITLE_POSITIONS,
-  IMAGE_POSITIONS,
   MAX_BLOCK_LIMIT,
   type BlockLocation,
 } from "../config/content.constants.js";
+import {
+  blockPresentation,
+  flattenPresentation,
+  normalizePresentation,
+} from "../utils/block-presentation.js";
 
 const MAX_BANNERS_PER_BLOCK = 20;
 
@@ -70,15 +66,7 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, n));
 }
 
-const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
-function readColor(raw: unknown): string {
-  const s = String(raw ?? "").trim();
-  if (!s) return "";
-  if (s === "transparent") return "transparent";
-  if (HEX_RE.test(s)) return s;
-  return "";
-}
 
 function readIdArray(raw: any, limit: number): string[] {
   if (!Array.isArray(raw)) return [];
@@ -188,27 +176,6 @@ type Parsed =
   | { ok: true; doc: Record<string, any> }
   | { ok: false; error: string };
 
-function parseDisplayConfig(body: any): Record<string, any> {
-  const dc = body?.displayConfig ?? {};
-  return {
-    theme: pickEnum(dc.theme, BLOCK_THEMES, "inherit"),
-    columns: clamp(readNum(dc.columns, 4), 1, 6),
-    gap: clamp(readNum(dc.gap, 16), 0, 64),
-    borderless: readBool(dc.borderless),
-    rounded: readBool(dc.rounded, true),
-    shadow: readBool(dc.shadow),
-    alignment: pickEnum(dc.alignment, BLOCK_ALIGNMENTS, "start"),
-    animation: pickEnum(dc.animation, BLOCK_ANIMATIONS, "fade"),
-    cardShape: pickEnum(dc.cardShape, CARD_SHAPES, "default"),
-    cardRatio: pickEnum(dc.cardRatio, CARD_RATIOS, "1:1"),
-    cardSize: pickEnum(dc.cardSize, CARD_SIZES, "md"),
-    cardLayout: pickEnum(dc.cardLayout, CARD_LAYOUTS, "stacked"),
-    titlePosition: pickEnum(dc.titlePosition, TITLE_POSITIONS, "below"),
-    imagePosition: pickEnum(dc.imagePosition, IMAGE_POSITIONS, "center"),
-    backgroundColor: readColor(dc.backgroundColor),
-    textColor: readColor(dc.textColor),
-  };
-}
 
 function parseCta(body: any) {
   return {
@@ -298,33 +265,26 @@ function parseBlockBody(body: any): Parsed {
   if (cta.style !== "none" && !cta.link)
     return { ok: false, error: "CTA requires a link" };
 
+  // A banner source always renders as a banner; keep the pair consistent
+  // instead of letting the editor store an unusable combination.
+  const effectiveDisplay = sourceType === "banner" ? "banner" : display;
+
+  const presentation = normalizePresentation(
+    body?.presentation ?? {
+      displayConfig: body?.displayConfig,
+      sourceStyles: body?.sourceStyles,
+    },
+    effectiveDisplay,
+    sourceType,
+  );
+
   const doc = {
     name,
     location,
-    display,
+    display: effectiveDisplay,
     source,
     heading,
-    displayConfig: parseDisplayConfig(body),
-    sourceStyles: {
-      promotionBadgeStyle: String(
-        body?.sourceStyles?.promotionBadgeStyle ?? "default",
-      ),
-      promotionShowCode: readBool(body?.sourceStyles?.promotionShowCode, true),
-      collectionShowItemCount: readBool(
-        body?.sourceStyles?.collectionShowItemCount,
-      ),
-      collectionCountPosition: String(
-        body?.sourceStyles?.collectionCountPosition ?? "subline",
-      ),
-      manualCardSize: String(body?.sourceStyles?.manualCardSize ?? "md"),
-      manualCardVariant: String(
-        body?.sourceStyles?.manualCardVariant ?? "card",
-      ),
-      manualShowDescription: readBool(
-        body?.sourceStyles?.manualShowDescription,
-        true,
-      ),
-    },
+    presentation,
     cta,
     limit: clamp(readNum(body?.limit, 12), 1, MAX_BLOCK_LIMIT),
     status: pickEnum(body?.status, ["active", "inactive"] as const, "active"),
@@ -336,6 +296,28 @@ function parseBlockBody(body: any): Parsed {
 
 /* ------------------------------ reads ----------------------------------- */
 
+/**
+ * Canonical API shape for a block:
+ *  - `presentation` is the stored, pruned per-display/per-source config
+ *  - no legacy `displayConfig` / `sourceStyles` keys are returned
+ */
+function serializeBlock(doc: any) {
+  const presentation = blockPresentation(doc);
+  const legacy = flattenPresentation(presentation);
+
+  const { displayConfig, sourceStyles, ...rest } = doc;
+  void displayConfig;
+  void sourceStyles;
+
+  return {
+    ...rest,
+    presentation,
+    // Derived, pruned flat view — convenient for the editor and any caller
+    // still reading the old keys. Contains only fields for this display/source.
+    ...legacy,
+  };
+}
+
 export async function getAllBlocks(req: Request, res: Response): Promise<void> {
   await connection();
   const location = req.query.location as BlockLocation | undefined;
@@ -344,7 +326,9 @@ export async function getAllBlocks(req: Request, res: Response): Promise<void> {
   const docs = await Block.find(filter)
     .sort({ location: 1, order: 1, created_at: -1 })
     .lean();
-  res.json({ data: JSON.parse(JSON.stringify(docs)) });
+  res.json({
+    data: JSON.parse(JSON.stringify(docs.map((doc: any) => serializeBlock(doc)))),
+  });
 }
 
 export async function getBlockById(req: Request, res: Response): Promise<void> {
@@ -354,7 +338,7 @@ export async function getBlockById(req: Request, res: Response): Promise<void> {
   await connection();
   const doc = await Block.findById(id).lean();
   if (!doc) throw new AppError("Block not found", 404);
-  res.json({ data: JSON.parse(JSON.stringify(doc)) });
+  res.json({ data: JSON.parse(JSON.stringify(serializeBlock(doc))) });
 }
 
 /* ---------------------------- mutations --------------------------------- */
@@ -381,9 +365,10 @@ export async function createBlock(req: Request, res: Response): Promise<void> {
 
   const doc = new Block(parsed.doc);
   await doc.save();
-  res
-    .status(201)
-    .json({ success: true, data: JSON.parse(JSON.stringify(doc.toObject())) });
+  res.status(201).json({
+    success: true,
+    data: JSON.parse(JSON.stringify(serializeBlock(doc.toObject()))),
+  });
 }
 
 export async function updateBlock(req: Request, res: Response): Promise<void> {
@@ -403,14 +388,19 @@ export async function updateBlock(req: Request, res: Response): Promise<void> {
       );
   }
 
-  const updated = await Block.findByIdAndUpdate(id, parsed.doc, {
-    new: true,
-    runValidators: true,
-  });
+  const updated = await Block.findByIdAndUpdate(
+    id,
+    {
+      $set: parsed.doc,
+      // Drop the legacy flat config once the block is re-saved.
+      $unset: { displayConfig: "", sourceStyles: "" },
+    },
+    { new: true, runValidators: true },
+  );
   if (!updated) throw new AppError("Block not found", 404);
   res.json({
     success: true,
-    data: JSON.parse(JSON.stringify(updated.toObject())),
+    data: JSON.parse(JSON.stringify(serializeBlock(updated.toObject()))),
   });
 }
 

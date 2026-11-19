@@ -1,14 +1,13 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifyToken } from "../utils/jwt.js";
 import { ForbiddenError, UnauthorizedError } from "./error.middleware.js";
-
-const SESSION_COOKIE = "session";
+import { readSessionToken, resolveAudience } from "../utils/auth-cookies.js";
 
 function readToken(req: Request): string | null {
   const header = req.headers.authorization;
   if (header?.startsWith("Bearer ")) return header.slice(7).trim() || null;
-  const cookie = (req as any).cookies?.[SESSION_COOKIE];
-  return typeof cookie === "string" && cookie.length > 0 ? cookie : null;
+  // The app decides which cookie it owns via `x-auth-audience`.
+  return readSessionToken(req, resolveAudience(req));
 }
 
 export function requireUser(

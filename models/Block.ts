@@ -15,8 +15,6 @@ import {
   CARD_LAYOUTS,
   TITLE_POSITIONS,
   IMAGE_POSITIONS,
-  DEFAULT_BLOCK_DISPLAY_CONFIG,
-  DEFAULT_BLOCK_SOURCE_STYLES,
   MAX_BLOCK_LIMIT,
 } from "../config/content.constants.js";
 
@@ -29,6 +27,16 @@ export interface IBlockHeading {
   title: string;
   subtitle: string;
   showHeading: boolean;
+}
+
+/**
+ * Presentation is scoped: only the fields the current display/source can use
+ * are stored. See `config/block-presentation.ts` for the field matrix.
+ */
+export interface IBlockPresentation {
+  common: Record<string, any>;
+  display: Record<string, any>;
+  source: Record<string, any>;
 }
 
 export interface IBlockDisplayConfig {
@@ -82,8 +90,14 @@ export interface IBlock {
   display: (typeof BLOCK_DISPLAYS)[number];
   source: IBlockSource;
   heading: IBlockHeading;
-  displayConfig: IBlockDisplayConfig;
-  sourceStyles: IBlockSourceStyles;
+  presentation: IBlockPresentation;
+  /**
+   * @deprecated Legacy flat presentation, only present on rows created before
+   * the per-display/source split. Reads fall back to it; writes unset it.
+   */
+  displayConfig?: Partial<IBlockDisplayConfig>;
+  /** @deprecated see `displayConfig`. */
+  sourceStyles?: Partial<IBlockSourceStyles>;
   cta: IBlockCta;
   limit: number;
   status: "active" | "inactive";
@@ -112,118 +126,7 @@ const HeadingSchema = new Schema(
   { _id: false },
 );
 
-const DisplayConfigSchema = new Schema(
-  {
-    theme: {
-      type: String,
-      enum: BLOCK_THEMES,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.theme,
-    },
-    columns: {
-      type: Number,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.columns,
-      min: 1,
-      max: 6,
-    },
-    gap: {
-      type: Number,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.gap,
-      min: 0,
-      max: 64,
-    },
-    borderless: {
-      type: Boolean,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.borderless,
-    },
-    rounded: { type: Boolean, default: DEFAULT_BLOCK_DISPLAY_CONFIG.rounded },
-    shadow: { type: Boolean, default: DEFAULT_BLOCK_DISPLAY_CONFIG.shadow },
-    alignment: {
-      type: String,
-      enum: BLOCK_ALIGNMENTS,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.alignment,
-    },
-    animation: {
-      type: String,
-      enum: BLOCK_ANIMATIONS,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.animation,
-    },
-    cardShape: {
-      type: String,
-      enum: CARD_SHAPES,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.cardShape,
-    },
-    cardRatio: {
-      type: String,
-      enum: CARD_RATIOS,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.cardRatio,
-    },
-    cardSize: {
-      type: String,
-      enum: CARD_SIZES,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.cardSize,
-    },
-    cardLayout: {
-      type: String,
-      enum: CARD_LAYOUTS,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.cardLayout,
-    },
-    titlePosition: {
-      type: String,
-      enum: TITLE_POSITIONS,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.titlePosition,
-    },
-    imagePosition: {
-      type: String,
-      enum: IMAGE_POSITIONS,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.imagePosition,
-    },
-    backgroundColor: {
-      type: String,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.backgroundColor,
-      trim: true,
-    },
-    textColor: {
-      type: String,
-      default: DEFAULT_BLOCK_DISPLAY_CONFIG.textColor,
-      trim: true,
-    },
-  },
-  { _id: false },
-);
 
-const SourceStylesSchema = new Schema(
-  {
-    promotionBadgeStyle: {
-      type: String,
-      default: DEFAULT_BLOCK_SOURCE_STYLES.promotionBadgeStyle,
-    },
-    promotionShowCode: {
-      type: Boolean,
-      default: DEFAULT_BLOCK_SOURCE_STYLES.promotionShowCode,
-    },
-    collectionShowItemCount: {
-      type: Boolean,
-      default: DEFAULT_BLOCK_SOURCE_STYLES.collectionShowItemCount,
-    },
-    collectionCountPosition: {
-      type: String,
-      default: DEFAULT_BLOCK_SOURCE_STYLES.collectionCountPosition,
-    },
-    manualCardSize: {
-      type: String,
-      default: DEFAULT_BLOCK_SOURCE_STYLES.manualCardSize,
-    },
-    manualCardVariant: {
-      type: String,
-      default: DEFAULT_BLOCK_SOURCE_STYLES.manualCardVariant,
-    },
-    manualShowDescription: {
-      type: Boolean,
-      default: DEFAULT_BLOCK_SOURCE_STYLES.manualShowDescription,
-    },
-  },
-  { _id: false },
-);
 
 const CtaSchema = new Schema(
   {
@@ -267,8 +170,11 @@ const BlockSchema = new Schema<IBlock, BlockModel>(
     display: { type: String, enum: BLOCK_DISPLAYS, default: "grid" },
     source: { type: SourceSchema, required: true },
     heading: { type: HeadingSchema, default: () => ({}) },
-    displayConfig: { type: DisplayConfigSchema, default: () => ({}) },
-    sourceStyles: { type: SourceStylesSchema, default: () => ({}) },
+    presentation: {
+      common: { type: Schema.Types.Mixed, default: () => ({}) },
+      display: { type: Schema.Types.Mixed, default: () => ({}) },
+      source: { type: Schema.Types.Mixed, default: () => ({}) },
+    },
     cta: { type: CtaSchema, default: () => ({}) },
     limit: { type: Number, default: 12, min: 1, max: MAX_BLOCK_LIMIT },
     status: { type: String, enum: ["active", "inactive"], default: "active" },

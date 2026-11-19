@@ -10,8 +10,6 @@ import { buildProductQueryFromScope } from "./content-query.js";
 import Product from "../models/Product.js";
 import { BannerContent } from "../models/BannerContent.js";
 import {
-  DEFAULT_BLOCK_DISPLAY_CONFIG,
-  DEFAULT_BLOCK_SOURCE_STYLES,
   type BlockAnimation,
   type BlockAlignment,
   type BlockLocation,
@@ -24,6 +22,10 @@ import {
   type TitlePosition,
   type ImagePosition,
 } from "../config/content.constants.js";
+import {
+  blockPresentation,
+  flattenPresentation,
+} from "./block-presentation.js";
 
 export interface ResolveCtx {
   userId?: string;
@@ -65,10 +67,23 @@ export type ResolvedSourceStyles = BlockSourceStyles;
 export interface ResolvedBanner {
   _id: string;
   name: string;
+  /** image | video | html — decides how the slide is rendered. */
+  type: string;
   eyebrow: string;
   body: string;
   heading: { title: string; subtitle: string };
   image: string | null;
+  imageAlt: string;
+  videoUrl: string;
+  html: string;
+  link: string;
+  openInNewTab: boolean;
+  overlay: string;
+  ratio: string;
+  size: string;
+  align: string;
+  position: string;
+  theme: string;
   cta: ResolvedCta;
 }
 
@@ -87,10 +102,6 @@ export interface ResolvedBlock {
   items: NormalizedContentItem[];
   banners?: ResolvedBanner[];
 }
-
-const DEFAULT_DISPLAY: ResolvedDisplayConfig = {
-  ...DEFAULT_BLOCK_DISPLAY_CONFIG,
-};
 
 /* -------------------------------------------------------------------------- */
 /*                             Source resolvers                               */
@@ -183,8 +194,17 @@ async function resolveBanners(bannerIds: any[]): Promise<ResolvedBanner[]> {
 
   if (validIds.length === 0) return [];
 
+  // Only live banners are resolved: inactive ones and banners outside their
+  // scheduling window are skipped, keeping the block's own ordering.
+  const now = new Date();
   const docs: any[] = await BannerContent.find({
     _id: { $in: validIds },
+    // Missing status (legacy rows) counts as active.
+    status: { $ne: "inactive" },
+    $and: [
+      { $or: [{ startAt: null }, { startAt: { $lte: now } }] },
+      { $or: [{ endAt: null }, { endAt: { $gte: now } }] },
+    ],
   }).lean();
 
   const byId = new Map(docs.map((d) => [String(d._id), d]));
@@ -196,6 +216,7 @@ async function resolveBanners(bannerIds: any[]): Promise<ResolvedBanner[]> {
     out.push({
       _id: String(d._id),
       name: d.name ?? "",
+      type: d.type ?? "image",
       eyebrow: d.eyebrow ?? "",
       body: d.body ?? "",
       heading: {
@@ -203,6 +224,17 @@ async function resolveBanners(bannerIds: any[]): Promise<ResolvedBanner[]> {
         subtitle: d.heading?.subtitle ?? "",
       },
       image: d.image || null,
+      imageAlt: d.imageAlt ?? "",
+      videoUrl: d.videoUrl ?? "",
+      html: d.html ?? "",
+      link: d.link ?? "",
+      openInNewTab: Boolean(d.openInNewTab),
+      overlay: d.overlay ?? "gradient",
+      ratio: d.ratio ?? "1:1",
+      size: d.size ?? "md",
+      align: d.align ?? "left",
+      position: d.position ?? "center",
+      theme: d.theme ?? "light",
       cta: {
         text: d.cta?.text ?? "",
         link: d.cta?.link ?? "",
@@ -222,7 +254,7 @@ function buildItemsFromBanners(
     name: b.heading.title || b.name,
     image: b.image,
     description: b.body || null,
-    href: b.cta.link || "#",
+    href: b.link || b.cta.link || "#",
     contentType: "Page",
     badge: b.eyebrow || null,
   }));
@@ -238,15 +270,14 @@ export async function resolveBlock(
 ): Promise<ResolvedBlock | null> {
   if (!raw || raw.status !== "active") return null;
 
-  const displayConfig: ResolvedDisplayConfig = {
-    ...DEFAULT_DISPLAY,
-    ...(raw.displayConfig ?? {}),
-  };
+  // Presentation is stored per display/source ("presentation"), with a legacy
+  // fallback for rows written before the split. The renderer keeps consuming a
+  // flat shape, so it does not need to know about the storage layout.
+  const { displayConfig: flatDisplay, sourceStyles: flatSource } =
+    flattenPresentation(blockPresentation(raw));
 
-  const sourceStyles: ResolvedSourceStyles = {
-    ...DEFAULT_BLOCK_SOURCE_STYLES,
-    ...(raw.sourceStyles ?? {}),
-  };
+  const displayConfig = flatDisplay as ResolvedDisplayConfig;
+  const sourceStyles = flatSource as ResolvedSourceStyles;
 
   const heading: ResolvedHeading = {
     title: raw.heading?.title ?? "",
