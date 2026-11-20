@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import Order from "../models/Order.js";
 import { deductOrderItem } from "./inventory.js";
+import { notifyAdminsAboutPaymentSuccess } from "./notification.service.js";
 import Invoice from "../models/Invoice.js";
 import PromotionUsage from "../models/PromotionUsage.js";
 
@@ -76,6 +77,17 @@ export async function markOrderPaid(
   const paidOrder = await Order.findById(order._id);
   if (!paidOrder) return { ok: false, error: "Order not found" };
 
+  void notifyAdminsAboutPaymentSuccess({
+    orderNumber: paidOrder.orderNumber,
+    customerName:
+      `${paidOrder.firstName ?? ""} ${paidOrder.lastName ?? ""}`.trim() ||
+      paidOrder.email,
+    total: Number(paidOrder.total) || 0,
+    transactionId: payment.transactionId,
+  }).catch((err) => {
+    console.error("[markOrderPaid] notification failed:", err);
+  });
+
   try {
     await fulfillOrder(paidOrder);
   } catch (err) {
@@ -84,6 +96,32 @@ export async function markOrderPaid(
     console.error("[markOrderPaid] fulfillment failed:", err);
   }
   return { ok: true, alreadyPaid: false, orderNumber };
+}
+
+/**
+ * Moves a pending order to `confirmed` once payment has been captured and
+ * stock committed. Idempotent: only touches orders still in `pending`.
+ */
+export async function confirmOrderAfterPayment(
+  order: any,
+  note = "Payment captured",
+): Promise<void> {
+  if (!order?._id) return;
+  const now = new Date();
+  await Order.updateOne(
+    { _id: order._id, orderStatus: "pending" },
+    {
+      $set: { orderStatus: "confirmed", confirmedAt: now },
+      $push: {
+        statusHistory: {
+          status: "confirmed",
+          at: now,
+          by: null,
+          note,
+        },
+      },
+    },
+  );
 }
 
 export async function markOrderFailed(
@@ -123,6 +161,14 @@ async function fulfillOrder(order: any): Promise<void> {
       },
     },
   );
+
+  // Payment captured and stock committed → the order is confirmed by the
+  // system, not by an admin. Shortage keeps it pending for manual review.
+  if (!shortage) {
+    await confirmOrderAfterPayment(order).catch((err) => {
+      console.error("[fulfillOrder] auto-confirm failed:", err);
+    });
+  }
 
   await createInvoice(order).catch((err) => {
     console.error("[fulfillOrder] invoice failed:", err?.message ?? err);

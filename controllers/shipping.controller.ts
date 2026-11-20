@@ -92,14 +92,53 @@ export async function updateShipping(
   });
 
   if (data.status && data.status !== shipping.status) {
+    // Shipping has its own vocabulary; map it onto the order lifecycle.
+    const shippingStatusMap: Record<string, "pending" | "shipped" | "delivered"> = {
+      pending: "pending",
+      assigned: "pending",
+      in_transit: "shipped",
+      delivered: "delivered",
+      completed: "delivered",
+      returned: "delivered",
+    };
+
+    const now = new Date();
+    const patch: Record<string, any> = {};
+    const mapped = shippingStatusMap[data.status];
+    if (mapped) patch.shippingStatus = mapped;
+
+    const orderPatch: Record<string, any> = {};
+    if (data.status === "in_transit") {
+      Object.assign(orderPatch, {
+        orderStatus: "shipped",
+        shippedAt: now,
+        shippingDate: now,
+      });
+    } else if (data.status === "delivered" || data.status === "completed") {
+      Object.assign(orderPatch, {
+        orderStatus: "delivered",
+        deliveredAt: now,
+        deliveryDate: now,
+      });
+    }
+
     await Order.findByIdAndUpdate(
       shipping.orderId,
       {
-        // NOTE: preserved from original — raw `data.status` is often not a
-        // valid Order.shippingStatus value. See mapToOrderShippingStatus()
-        // at the top of this file if you want to fix that.
-        shippingStatus: data.status,
-        ...(data.status === "completed" && { orderStatus: "completed" }),
+        ...(Object.keys(patch).length ? { $set: patch } : {}),
+        ...(Object.keys(orderPatch).length
+          ? {
+              $set: { ...(patch ?? {}), ...orderPatch },
+              $push: {
+                statusHistory: {
+                  status:
+                    data.status === "in_transit" ? "shipped" : "delivered",
+                  at: now,
+                  note: "Updated from shipping",
+                },
+              },
+            }
+          : {}),
       },
       { new: true, runValidators: false },
     );

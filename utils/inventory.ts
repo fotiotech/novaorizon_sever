@@ -126,6 +126,33 @@ export async function releaseOrderItem(item: any): Promise<void> {
   );
 }
 
+/** Put an order line back into stock (returns / cancellations). */
+export async function restockOrderItem(item: any): Promise<void> {
+  const quantity = clampQty(item?.quantity);
+  if (!item?.productId || quantity <= 0) return;
+
+  const variantId = item.variantId ? String(item.variantId) : null;
+  if (variantId) {
+    const product: any = await Product.findById(item.productId)
+      .select("variants")
+      .lean();
+    const index = variantIndex(product?.variants ?? [], variantId);
+    if (index < 0) return;
+    await Product.updateOne(
+      { _id: item.productId },
+      { $inc: { [`variants.${index}.quantity`]: quantity } },
+    );
+    await applyStockStatus(item.productId);
+    return;
+  }
+
+  await Product.updateOne(
+    { _id: item.productId },
+    { $inc: { quantity } },
+  );
+  await applyStockStatus(item.productId);
+}
+
 export async function releaseOrderReservations(order: any): Promise<void> {
   if (!order || order.inventoryDeducted) return;
   for (const item of order.products ?? []) {

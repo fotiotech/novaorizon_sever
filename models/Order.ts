@@ -18,13 +18,23 @@ export type ShippingStatus = "pending" | "shipped" | "delivered";
 
 export type OrderStatus =
   | "pending"
+  | "confirmed"
   | "processing"
   | "shipped"
-  | "in transit"
-  | "completed"
+  | "delivered"
   | "return_requested"
+  | "returned"
   | "cancelled"
-  | "returned";
+  // Legacy values kept readable until the migration script runs.
+  | "in transit"
+  | "completed";
+
+export interface IOrderStatusEvent {
+  status: string;
+  at: Date;
+  by?: Types.ObjectId | null;
+  note?: string | null;
+}
 
 export interface IOrderProduct {
   productId: Types.ObjectId;
@@ -85,6 +95,13 @@ export interface IOrder {
   shippingDate?: Date | null;
   deliveryDate?: Date | null;
   orderStatus: OrderStatus;
+  statusHistory?: IOrderStatusEvent[];
+  confirmedAt?: Date | null;
+  processingAt?: Date | null;
+  shippedAt?: Date | null;
+  deliveredAt?: Date | null;
+  cancelledAt?: Date | null;
+  returnedAt?: Date | null;
   refundAmount: number;
   returnReason?: string | null;
   returnRequestedAt?: Date | null;

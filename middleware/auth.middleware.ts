@@ -64,6 +64,32 @@ export function optionalUser(
   }
 }
 
+/**
+ * Like `optionalUser`, but a present-but-invalid token is ignored instead of
+ * failing the request. Used by analytics so expired sessions don't drop events.
+ */
+export function tryUser(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): void {
+  const token = readToken(req);
+  if (!token) return next();
+  try {
+    const claims = verifyToken(token);
+    req.user = {
+      id: claims.sub,
+      role: claims.role,
+      email: claims.email ?? null,
+      name: claims.name ?? null,
+      image: claims.image ?? null,
+    };
+  } catch {
+    /* anonymous */
+  }
+  next();
+}
+
 export function requireAdmin(
   req: Request,
   res: Response,

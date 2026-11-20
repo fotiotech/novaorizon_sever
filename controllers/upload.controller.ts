@@ -85,10 +85,17 @@ export async function uploadToS3(req: Request, res: Response): Promise<void> {
         Key: fileKey,
         Body: file.buffer,
         ContentType: file.mimetype,
+        // Uploaded assets are content-addressed (uuid filename), so they can be
+        // cached forever. Required for the Next image optimizer to work well.
+        CacheControl: "public, max-age=31536000, immutable",
+        ...(env.awsObjectAcl ? { ACL: env.awsObjectAcl as any } : {}),
       }),
     );
 
-    const url = `https://${env.awsBucketName}.s3.${env.awsRegion}.amazonaws.com/${fileKey}`;
+    const base = env.awsPublicBaseUrl?.trim().replace(/\/$/, "");
+    const url = base
+      ? `${base}/${fileKey}`
+      : `https://${env.awsBucketName}.s3.${env.awsRegion}.amazonaws.com/${fileKey}`;
 
     res.status(201).json({ success: true, data: { fileKey, url } });
   } catch (err) {

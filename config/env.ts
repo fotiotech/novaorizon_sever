@@ -59,9 +59,10 @@ export const env = {
   /* --------------------------- Pusher (realtime) ---------------------- */
   // Empty = realtime pushes silently no-op. `utils/pusher.ts` returns null.
   pusherAppId: read("PUSHER_APP_ID"),
-  pusherKey: read("PUSHER_KEY"),
+  pusherKey: read("PUSHER_KEY") || read("NEXT_PUBLIC_PUSHER_APP_KEY"),
   pusherSecret: read("PUSHER_SECRET"),
-  pusherCluster: read("PUSHER_CLUSTER"),
+  pusherCluster:
+    read("PUSHER_CLUSTER") || read("NEXT_PUBLIC_PUSHER_APP_CLUSTER"),
 
   /* ----------------------- AWS S3 (uploads/images) -------------------- */
   // Empty = `deleteS3Object()` logs and no-ops. Uploads return 400.
@@ -69,6 +70,10 @@ export const env = {
   awsAccessKeyId: read("AWS_ACCESS_KEY_ID"),
   awsSecretAccessKey: read("AWS_SECRET_ACCESS_KEY"),
   awsBucketName: read("AWS_BUCKET_NAME"),
+  /** Optional CDN/public base URL (e.g. CloudFront) used for returned image URLs. */
+  awsPublicBaseUrl: read("AWS_PUBLIC_BASE_URL"),
+  /** Optional canned ACL for uploads (e.g. "public-read"); omit for bucket-policy setups. */
+  awsObjectAcl: read("AWS_OBJECT_ACL"),
 
   /* --------------------------- Resend (email) ------------------------- */
   // Empty = forgot-password silently no-ops (safe) and campaigns fail

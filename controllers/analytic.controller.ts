@@ -390,11 +390,11 @@ export async function getOverviewData(
 
   const [totalOrders, completedOrders] = await Promise.all([
     Order.countDocuments(),
-    Order.countDocuments({ orderStatus: "completed" }),
+    Order.countDocuments({ orderStatus: { $in: ["delivered", "completed"] } }),
   ]);
 
   const revenueResult = await Order.aggregate([
-    { $match: { orderStatus: "completed" } },
+    { $match: { orderStatus: { $in: ["delivered", "completed"] } } },
     { $group: { _id: null, total: { $sum: "$total" } } },
   ]);
   const totalRevenue = revenueResult.length > 0 ? revenueResult[0].total : 0;

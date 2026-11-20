@@ -63,7 +63,9 @@ const EventSchema = new Schema<IEvent, EventModel>(
     metadata: { type: Schema.Types.Mixed, default: {} },
     timestamp: { type: Date, default: Date.now, index: true },
     isBot: { type: Boolean, default: false, index: true },
-    idempotencyKey: { type: String, sparse: true, unique: true, default: null },
+    // Sparse + no default: documents without a key must omit the field
+    // entirely, otherwise every null would collide on the unique index.
+    idempotencyKey: { type: String, sparse: true, unique: true },
     context: {
       userAgent: String,
       referrer: String,

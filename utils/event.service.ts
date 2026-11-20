@@ -96,7 +96,7 @@ export async function trackEvent(
     sessionId,
     metadata,
     isBot: false,
-    idempotencyKey,
+    idempotencyKey: idempotencyKey ?? undefined,
     context: {
       userAgent: ua,
       referrer: headers?.referrer,
@@ -174,13 +174,17 @@ export async function getEventsSince(
   limit = 50,
 ): Promise<any[]> {
   await connection();
+  // Take the *newest* `limit` events, then return them ascending — the live
+  // feed appends and relies on ascending order.
   const events = await Event.find({
     isBot: { $ne: true },
     timestamp: { $gt: new Date(since) },
   })
-    .sort({ timestamp: 1 })
+    .sort({ timestamp: -1 })
     .limit(limit)
     .lean();
+
+  events.reverse();
 
   // Batch-fetch product info for events that have an itemId
   const itemIds = events

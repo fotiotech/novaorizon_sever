@@ -46,6 +46,13 @@ function deriveHeaders(req: Request): EventHeaders {
 }
 
 function deriveGuestId(req: Request): string | null {
+  // Prefer the browser-side guest cookie (stable across server-to-server
+  // tracking calls); fall back to the API's cart session.
+  const guestCookie = (req as unknown as { cookies?: Record<string, unknown> })
+    .cookies?.guestId;
+  if (typeof guestCookie === "string" && guestCookie.length >= 8) {
+    return guestCookie;
+  }
   return (req as CartSessionRequest).cartSessionId ?? null;
 }
 
@@ -62,7 +69,12 @@ export async function trackEvent(req: Request, res: Response): Promise<void> {
   // Prefer the authenticated user; fall back to the cart session id for
   // anonymous visitors. If neither is present, the request isn't tracking-
   // eligible — reply cleanly rather than writing a doc with a null userId.
-  const userId = authenticatedUserId(req) ?? deriveGuestId(req);
+  const userId =
+    authenticatedUserId(req) ??
+    deriveGuestId(req) ??
+    (typeof body.sessionId === "string" && body.sessionId.length >= 8
+      ? body.sessionId
+      : null);
   if (!userId) {
     res.json({ ok: true, skipped: "anonymous" });
     return;

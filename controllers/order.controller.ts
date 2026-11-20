@@ -8,7 +8,20 @@ import Product from "../models/Product.js";
 import {
   deductOrderItem,
   releaseOrderReservations,
+  restockOrderItem,
 } from "../utils/inventory.js";
+import {
+  canTransition,
+  nextStatuses,
+  normalizeOrderStatus,
+  STATUS_TIMESTAMP_FIELD,
+  type OrderLifecycleStatus,
+} from "../utils/order-lifecycle.js";
+import { confirmOrderAfterPayment } from "../utils/order-service.js";
+import {
+  notifyAdmins,
+  notifyAdminsAboutPaymentSuccess,
+} from "../utils/notification.service.js";
 import Invoice from "../models/Invoice.js";
 import "../models/Address.js";
 import "../models/PaymentMethod.js";
@@ -165,48 +178,148 @@ export async function updateOrderStatus(
 ): Promise<void> {
   await connection();
   const orderNumber = param(req, "orderNumber");
-  const { paymentStatus, orderStatus } = req.body ?? {};
+  const body = req.body ?? {};
+  const paymentStatus = body.paymentStatus as string | undefined;
+  const rawOrderStatus = body.orderStatus;
+  const note = body.note ? String(body.note).slice(0, 500) : null;
 
   if (!orderNumber) throw new ValidationError({ orderNumber: ["required"] });
-  if (!paymentStatus && !orderStatus) {
+  if (!paymentStatus && rawOrderStatus === undefined) {
     throw new ValidationError({
       _form: ["At least one status must be provided"],
     });
   }
 
   const existing: any = await Order.findOne({ orderNumber })
-    .select("paymentStatus")
+    .select("orderStatus paymentStatus paymentMethod")
     .lean();
-  const wasPaid = existing?.paymentStatus === "paid";
+  if (!existing) throw new AppError(`Order ${orderNumber} not found`, 404);
 
-  const updateFields: Record<string, any> = {};
-  if (paymentStatus) updateFields.paymentStatus = paymentStatus;
-  if (orderStatus) updateFields.orderStatus = orderStatus;
-  if (paymentStatus === "paid" && !wasPaid) {
-    updateFields.paidAt = new Date();
-    updateFields.inventoryStatus = "pending";
+  const current: OrderLifecycleStatus =
+    normalizeOrderStatus(existing.orderStatus) ?? "pending";
+
+  let target: OrderLifecycleStatus | null = null;
+  if (rawOrderStatus !== undefined) {
+    target = normalizeOrderStatus(rawOrderStatus);
+    if (!target) {
+      throw new ValidationError({ orderStatus: ["Unknown order status"] });
+    }
+    if (target === "confirmed" && current !== "confirmed") {
+      const effectivePayment = paymentStatus ?? existing.paymentStatus;
+      const method = String(existing.paymentMethod ?? "").toLowerCase();
+      const isOffline = ["cash", "cod", "cash_on_delivery"].includes(method);
+      if (effectivePayment !== "paid" && !isOffline) {
+        throw new AppError(
+          "Orders are confirmed automatically once payment succeeds. Capture the payment first (or use an offline/cash method).",
+          409,
+        );
+      }
+    }
+
+    if (target !== current && !canTransition(current, target)) {
+      const allowed = nextStatuses(current);
+      throw new AppError(
+        `Cannot move order from "${current}" to "${target}". Allowed: ${
+          allowed.length ? allowed.join(", ") : "none (terminal status)"
+        }.`,
+        409,
+      );
+    }
   }
 
+  const now = new Date();
+  const changed = target !== null && target !== current;
+  const updates: Record<string, any> = {};
+
+  if (paymentStatus) {
+    updates.paymentStatus = paymentStatus;
+    if (paymentStatus === "paid" && existing.paymentStatus !== "paid") {
+      updates.paidAt = now;
+      updates.inventoryStatus = "pending";
+    }
+  }
+
+  if (target) {
+    updates.orderStatus = target;
+    if (changed) {
+      const timestampField = STATUS_TIMESTAMP_FIELD[target];
+      if (timestampField) updates[timestampField] = now;
+      if (target === "shipped") {
+        updates.shippingStatus = "shipped";
+        updates.shippingDate = now;
+      }
+      if (target === "delivered") {
+        updates.shippingStatus = "delivered";
+        updates.deliveryDate = now;
+      }
+    }
+  }
+
+  const update: Record<string, any> = { $set: updates };
+  if (changed) {
+    update.$push = {
+      statusHistory: {
+        status: target,
+        at: now,
+        by: req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : null,
+        note,
+      },
+    };
+  }
+
+  // Guarded by the previous status so two admins cannot skip a step.
   const order = await Order.findOneAndUpdate(
-    { orderNumber },
-    { $set: updateFields },
+    { orderNumber, orderStatus: existing.orderStatus },
+    update,
     { new: true, runValidators: false },
   );
-  if (!order) throw new AppError(`Order ${orderNumber} not found`, 404);
+  if (!order) {
+    throw new AppError(
+      "The order status changed while you were updating it. Refresh and try again.",
+      409,
+    );
+  }
 
-  if (paymentStatus === "paid" && !wasPaid) {
+  if (paymentStatus === "paid" && existing.paymentStatus !== "paid") {
     await deductInventoryForOrder(order).catch((err) =>
       console.error("[updateOrderStatus] inventory deduction failed:", err),
     );
+    await createInvoiceForOrder(order).catch((err) =>
+      console.error("[updateOrderStatus] invoice failed:", err),
+    );
+
+    void notifyAdminsAboutPaymentSuccess({
+      orderNumber: order.orderNumber,
+      customerName:
+        `${order.firstName ?? ""} ${order.lastName ?? ""}`.trim() ||
+        order.email,
+      total: Number(order.total) || 0,
+    }).catch((err) => {
+      console.error("[updateOrderStatus] payment notification failed:", err);
+    });
+
+    const refreshed = await Order.findById(order._id)
+      .select("inventoryStatus")
+      .lean();
+    if (refreshed?.inventoryStatus !== "shortage") {
+      await confirmOrderAfterPayment(order).catch((err) =>
+        console.error("[updateOrderStatus] auto-confirm failed:", err),
+      );
+    }
   }
-  if (orderStatus === "cancelled") {
+
+  if (changed && target === "cancelled") {
     await releaseOrderReservations(order).catch((err) =>
       console.error("[updateOrderStatus] release reservations failed:", err),
     );
+    void notifyAdmins(
+      "order",
+      `Order #${order.orderNumber} was cancelled`,
+    ).catch((err) =>
+      console.error("[updateOrderStatus] cancel notification failed:", err),
+    );
   }
-  if (paymentStatus === "paid") {
-    await createInvoiceForOrder(order);
-  }
+
   if (paymentStatus === "refunded") {
     try {
       await new Transaction({
@@ -300,20 +413,21 @@ export async function completePOSOrder(
     paymentMethod: customer.paymentMethod || "cash",
     billingAddress: fallbackAddress,
     shippingAddress: { ...fallbackAddress, carrier: "POS" },
-    shippingStatus: "pending",
-    orderStatus: "completed",
+    shippingStatus: "delivered",
+    orderStatus: "delivered",
+    deliveredAt: new Date(),
+    statusHistory: [
+      { status: "delivered", at: new Date(), note: "POS sale" },
+    ],
     discount: Number(cart.discount || 0),
     notes: customer.notes || `POS sale via ${sessionId || userId || "guest"}`,
   });
 
-  for (const item of cart.items) {
-    const product: any = await Product.findById(item.productId);
-    if (!product) continue;
-    product.quantity = Math.max(
-      0,
-      getProductQuantity(product) - Number(item.quantity || 0),
+  for (const item of orderProducts) {
+    if (item.variantId) continue; // POS lines are product-level for now
+    await deductOrderItem(item).catch((err) =>
+      console.error("[completePOSOrder] stock deduction failed:", err),
     );
-    await product.save();
   }
 
   await Cart.deleteOne({ _id: cart._id });
@@ -337,11 +451,10 @@ export async function requestReturn(
   const order = await Order.findOne({ orderNumber });
   if (!order) throw new AppError("Order not found", 404);
 
-  if (
-    ["returned", "cancelled", "return_requested"].includes(order.orderStatus)
-  ) {
+  const current = normalizeOrderStatus(order.orderStatus) ?? "pending";
+  if (current !== "delivered") {
     throw new AppError(
-      "This order is already in a return or cancellation flow.",
+      "Only delivered orders can be returned. Delivered → return requested is the only return entry point.",
       409,
     );
   }
@@ -349,16 +462,32 @@ export async function requestReturn(
     throw new AppError("Only paid orders can be returned or refunded.", 400);
   }
 
+  const now = new Date();
   const updated = await Order.findOneAndUpdate(
-    { orderNumber },
+    { orderNumber, orderStatus: order.orderStatus },
     {
       $set: {
         orderStatus: "return_requested",
         returnReason: reason,
-        returnRequestedAt: new Date(),
+        returnRequestedAt: now,
+      },
+      $push: {
+        statusHistory: {
+          status: "return_requested",
+          at: now,
+          by: req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : null,
+          note: reason,
+        },
       },
     },
     { new: true },
+  );
+
+  void notifyAdmins(
+    "order",
+    `Return requested for order #${orderNumber}${reason ? ` — ${reason}` : ""}`,
+  ).catch((err) =>
+    console.error("[requestReturn] notification failed:", err),
   );
 
   res.json({ success: true, data: updated?.toObject() });
@@ -389,16 +518,26 @@ export async function resolveReturnRequest(
 
   if (action === "approve") {
     const refundAmount = Number(options?.refundAmount ?? order.total ?? 0);
+    const now = new Date();
     const updated = await Order.findOneAndUpdate(
-      { orderNumber },
+      { orderNumber, orderStatus: order.orderStatus },
       {
         $set: {
           orderStatus: "returned",
           paymentStatus: "refunded",
           refundAmount,
-          refundedAt: new Date(),
+          refundedAt: now,
+          returnedAt: now,
           returnReason:
             options?.reason || order.returnReason || "Approved by admin",
+        },
+        $push: {
+          statusHistory: {
+            status: "returned",
+            at: now,
+            by: req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : null,
+            note: options?.reason || "Return approved",
+          },
         },
       },
       { new: true },
@@ -416,26 +555,31 @@ export async function resolveReturnRequest(
     }).save();
 
     for (const item of order.products || []) {
-      const product = await Product.findById(item.productId);
-      if (!product) continue;
-      product.quantity = Math.max(
-        0,
-        getProductQuantity(product) + Number(item.quantity || 0),
+      await restockOrderItem(item).catch((err) =>
+        console.error("[resolveReturnRequest] restock failed:", err),
       );
-      await product.save();
     }
 
     res.json({ success: true, data: updated?.toObject() });
     return;
   }
 
+  const now = new Date();
   const updated = await Order.findOneAndUpdate(
-    { orderNumber },
+    { orderNumber, orderStatus: order.orderStatus },
     {
       $set: {
-        orderStatus: "completed",
+        orderStatus: "delivered",
         returnReason:
           options?.reason || order.returnReason || "Return rejected by admin",
+      },
+      $push: {
+        statusHistory: {
+          status: "delivered",
+          at: now,
+          by: req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : null,
+          note: "Return request rejected",
+        },
       },
     },
     { new: true },
@@ -463,7 +607,7 @@ export async function createOrUpdateOrder(
     shippingCost = 0,
     paymentStatus = "pending",
     shippingStatus = "pending",
-    orderStatus = "processing",
+    orderStatus = "pending",
     discount = 0,
     shippingAddress,
     billingAddress,
@@ -472,6 +616,9 @@ export async function createOrUpdateOrder(
     ...rest
   } = data;
 
+  // Any caller-supplied status is normalised to the lifecycle vocabulary.
+  const normalizedStatus = normalizeOrderStatus(orderStatus) ?? "pending";
+
   const payload: Record<string, any> = {
     ...rest,
     orderNumber: payment_ref,
@@ -479,7 +626,7 @@ export async function createOrUpdateOrder(
     shippingCost,
     paymentStatus,
     shippingStatus,
-    orderStatus,
+    orderStatus: normalizedStatus,
     discount,
     shippingAddress: {
       street: shippingAddress?.street || "",
@@ -502,7 +649,12 @@ export async function createOrUpdateOrder(
 
   const savedOrder = await Order.findOneAndUpdate(
     { orderNumber: payment_ref },
-    payload,
+    {
+      $set: payload,
+      $setOnInsert: {
+        statusHistory: [{ status: normalizedStatus, at: new Date() }],
+      },
+    },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
   );
 
@@ -515,6 +667,15 @@ export async function deleteOrder(req: Request, res: Response): Promise<void> {
   await connection();
   const orderNumber = param(req, "orderNumber");
   if (!orderNumber) throw new ValidationError({ orderNumber: ["required"] });
+
+  const pendingOrder = await Order.findOne({ orderNumber })
+    .select("products inventoryDeducted")
+    .lean();
+  if (pendingOrder && !pendingOrder.inventoryDeducted) {
+    await releaseOrderReservations(pendingOrder).catch((err) =>
+      console.error("[deleteOrder] release reservations failed:", err),
+    );
+  }
 
   const deleted = await Order.findOneAndDelete({ orderNumber });
   if (!deleted) throw new AppError("Order not found", 404);

@@ -5,6 +5,7 @@ import Order from "../models/Order.js";
 import Address from "../models/Address.js";
 import { connection } from "../config/db.js";
 import { quoteShippingPrice } from "./shipping-price.js";
+import { notifyAdminsAboutNewOrder } from "./notification.service.js";
 import {
   previewCartDiscounts,
   type Cart as PromotionCart,
@@ -497,6 +498,7 @@ export async function createCheckoutOrder(
       shippingStatus: "pending",
       notes: clean(input.notes, 1000) || undefined,
       inventoryStatus: "pending",
+      statusHistory: [{ status: "pending", at: new Date() }],
       appliedPromotions: (discountResult.applied ?? []).map((a: any) => ({
         promotionId: new mongoose.Types.ObjectId(String(a._id)),
         name: a.name,
@@ -521,6 +523,16 @@ export async function createCheckoutOrder(
         console.error("[createCheckoutOrder] reserve failed:", err);
       });
     }
+
+    void notifyAdminsAboutNewOrder({
+      orderNumber: created.orderNumber,
+      customerName:
+        `${created.firstName ?? ""} ${created.lastName ?? ""}`.trim() ||
+        created.email,
+      total: Number(created.total) || 0,
+    }).catch((err) => {
+      console.error("[createCheckoutOrder] notification failed:", err);
+    });
 
     return {
       success: true,
