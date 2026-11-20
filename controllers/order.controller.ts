@@ -5,6 +5,10 @@ import Shipping from "../models/Shipping.js";
 import Transaction from "../models/Transaction.js";
 import Cart from "../models/Cart.js";
 import Product from "../models/Product.js";
+import {
+  deductOrderItem,
+  releaseOrderReservations,
+} from "../utils/inventory.js";
 import Invoice from "../models/Invoice.js";
 import "../models/Address.js";
 import "../models/PaymentMethod.js";
@@ -31,14 +35,8 @@ async function deductInventoryForOrder(order: any): Promise<void> {
 
   let shortage = false;
   for (const item of order.products ?? []) {
-    const quantity = Number(item.quantity) || 0;
-    if (!item.productId || quantity <= 0) continue;
-
-    const result = await Product.updateOne(
-      { _id: item.productId, quantity: { $gte: quantity } },
-      { $inc: { quantity: -quantity } },
-    );
-    if (result.modifiedCount === 0) shortage = true;
+    const outcome = await deductOrderItem(item);
+    if (outcome === "shortage") shortage = true;
   }
 
   await Order.updateOne(
@@ -199,6 +197,11 @@ export async function updateOrderStatus(
   if (paymentStatus === "paid" && !wasPaid) {
     await deductInventoryForOrder(order).catch((err) =>
       console.error("[updateOrderStatus] inventory deduction failed:", err),
+    );
+  }
+  if (orderStatus === "cancelled") {
+    await releaseOrderReservations(order).catch((err) =>
+      console.error("[updateOrderStatus] release reservations failed:", err),
     );
   }
   if (paymentStatus === "paid") {

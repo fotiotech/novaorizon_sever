@@ -12,6 +12,26 @@ function param(req: Request, key: string): string {
   return Array.isArray(raw) ? raw[0] : raw;
 }
 
+function availableFor(product: any, variantRef?: string | null): number {
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  if (variantRef && variants.length) {
+    const wanted = String(variantRef);
+    const variant = variants.find(
+      (v: any) =>
+        String(v?.variantId ?? "") === wanted ||
+        String(v?._id ?? "") === wanted ||
+        String(v?.sku ?? "") === wanted,
+    );
+    if (variant) {
+      return Math.max(
+        0,
+        (Number(variant.quantity) || 0) - (Number(variant.reserved) || 0),
+      );
+    }
+  }
+  return Math.max(0, Number(product?.quantity) || 0);
+}
+
 function getIdentifier(req: Request): { userId?: string; sessionId?: string } {
   const userId = req.user?.id;
   const sessionId = (req as CartSessionRequest).cartSessionId;
@@ -113,11 +133,11 @@ export async function addToCart(req: Request, res: Response): Promise<void> {
   }
 
   const product: any = await Product.findById(productId)
-    .select("price name images quantity lowStockThreshold")
+    .select("price name images quantity lowStockThreshold variants")
     .lean();
   if (!product) throw new AppError("Product not found", 404);
 
-  const availableQty = Number(product.quantity ?? 0);
+  const availableQty = availableFor(product, variant);
 
   let cart: any = await Cart.findOne(userId ? { userId } : { sessionId });
   if (!cart) {
@@ -200,9 +220,9 @@ export async function updateCartItem(
   } else {
     const item = cart.items[idx];
     const product: any = await Product.findById(item.productId)
-      .select("quantity")
+      .select("quantity variants")
       .lean();
-    const availableQty = Number(product?.quantity ?? 0);
+    const availableQty = availableFor(product, item.variant);
     if (quantity > availableQty) {
       throw new AppError(
         `Only ${availableQty} unit${availableQty > 1 ? "s" : ""} available in stock.`,

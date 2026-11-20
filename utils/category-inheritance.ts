@@ -12,6 +12,8 @@ import { connection } from "../config/db.js";
 interface AttributeFlags {
   isRequired: boolean;
   isHighlight: boolean;
+  isVariant: boolean;
+  isVariantAttribute: boolean;
 }
 
 function toFlags(
@@ -20,6 +22,8 @@ function toFlags(
   return {
     isRequired: input?.isRequired === true,
     isHighlight: input?.isHighlight === true,
+    isVariant: input?.isVariant === true,
+    isVariantAttribute: input?.isVariantAttribute === true,
   };
 }
 
@@ -32,6 +36,8 @@ function mapInputMappings(
         attribute: string;
         isRequired?: boolean;
         isHighlight?: boolean;
+        isVariant?: boolean;
+        isVariantAttribute?: boolean;
       }[];
     }[];
   }[],
@@ -132,6 +138,8 @@ function normalizeMappings(mappings: any[]): any[] {
                 attribute: a?.attribute?.toString?.() ?? a?.attribute ?? "",
                 isRequired: a?.isRequired === true,
                 isHighlight: a?.isHighlight === true,
+                isVariant: a?.isVariant === true,
+                isVariantAttribute: a?.isVariantAttribute === true,
               }))
             : [],
         }))
@@ -188,6 +196,8 @@ function mergeMappingsWithPrecedence(layers: any[][]): any[] {
           attribute,
           isRequired: flags.isRequired,
           isHighlight: flags.isHighlight,
+          isVariant: flags.isVariant,
+          isVariantAttribute: flags.isVariantAttribute,
         }),
       ),
     })),
@@ -395,179 +405,6 @@ export async function rerunInheritanceForCategoryAndDescendants(
   await walk(categoryId);
 }
 
-/* ------------------------------- prune ----------------------------------- */
-
-function collectAttrIdsFromMappings(mappings: any[]): Set<string> {
-  const out = new Set<string>();
-  for (const m of mappings ?? []) {
-    for (const g of m.groups ?? []) {
-      for (const a of g.attributes ?? []) {
-        const id = a?.attribute?.toString?.();
-        if (id) out.add(id);
-      }
-    }
-  }
-  return out;
-}
-
-async function collectAttrIdsFromPropertyId(
-  propertyId: string | null,
-): Promise<Set<string>> {
-  if (!propertyId) return new Set();
-  const prop: any = await CategoryProperty.findById(propertyId)
-    .select("mappings")
-    .lean();
-  return collectAttrIdsFromMappings(prop?.mappings ?? []);
-}
-
-async function collectAncestorAttrIds(
-  categoryId: string,
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  const visited = new Set<string>();
-
-  const self: any = await Category.findById(categoryId)
-    .select("parentId")
-    .lean();
-  if (!self?.parentId) return out;
-
-  let currentId: string | null = self.parentId.toString();
-  let depth = 0;
-
-  while (currentId && depth < 30 && !visited.has(currentId)) {
-    visited.add(currentId);
-    depth += 1;
-
-    const node: any = await Category.findById(currentId)
-      .select("property parentId")
-      .lean();
-    if (!node) break;
-
-    const own = await collectAttrIdsFromPropertyId(
-      node.property?.toString() ?? null,
-    );
-    for (const a of own) out.add(a);
-
-    currentId = node.parentId?.toString() ?? null;
-  }
-
-  return out;
-}
-
-async function pruneSubtree(
-  categoryId: string,
-  parentEffective: Set<string>,
-  visited: Set<string>,
-): Promise<number> {
-  if (visited.has(categoryId)) return 0;
-  visited.add(categoryId);
-
-  const category: any = await Category.findById(categoryId)
-    .select("property inheritedProperty inheritProperty parentId")
-    .lean();
-  if (!category) return 0;
-
-  const ownAttrs = await collectAttrIdsFromPropertyId(
-    category.property?.toString() ?? null,
-  );
-
-  const allowed = new Set<string>(parentEffective);
-  for (const a of ownAttrs) allowed.add(a);
-
-  let updated = 0;
-
-  if (
-    category.inheritProperty === true &&
-    category.inheritedProperty &&
-    category.parentId
-  ) {
-    const snapshotId = category.inheritedProperty.toString();
-    const snapshot: any = await CategoryProperty.findById(snapshotId)
-      .select("mappings")
-      .lean();
-
-    if (snapshot?.mappings) {
-      let removedAny = false;
-      const newMappings: any[] = [];
-
-      for (const m of snapshot.mappings ?? []) {
-        const newGroups: any[] = [];
-        for (const g of m.groups ?? []) {
-          const originalAttrs = g.attributes ?? [];
-          const keptAttrs = originalAttrs.filter((a: any) => {
-            const id = a?.attribute?.toString?.();
-            return id && allowed.has(id);
-          });
-          if (keptAttrs.length !== originalAttrs.length) removedAny = true;
-          if (keptAttrs.length > 0)
-            newGroups.push({ group: g.group, attributes: keptAttrs });
-        }
-        if (newGroups.length !== (m.groups ?? []).length) removedAny = true;
-        if (newGroups.length > 0)
-          newMappings.push({ set: m.set, groups: newGroups });
-      }
-
-      if (removedAny) {
-        if (newMappings.length === 0) {
-          await CategoryProperty.deleteOne({ _id: snapshotId });
-          await Category.findByIdAndUpdate(categoryId, {
-            $set: { inheritedProperty: null },
-          });
-        } else {
-          await CategoryProperty.findByIdAndUpdate(snapshotId, {
-            $set: { mappings: newMappings },
-          });
-        }
-        updated += 1;
-      }
-    }
-  }
-
-  const children: any[] = await Category.find({ parentId: categoryId })
-    .select("_id")
-    .lean();
-  for (const child of children)
-    updated += await pruneSubtree(child._id.toString(), allowed, visited);
-
-  return updated;
-}
-
-export async function pruneDescendantSnapshots(
-  categoryId: string,
-): Promise<number> {
-  await connection();
-  if (!mongoose.Types.ObjectId.isValid(categoryId)) return 0;
-  const ancestorAttrs = await collectAncestorAttrIds(categoryId);
-  return pruneSubtree(categoryId, ancestorAttrs, new Set());
-}
-
-export async function pruneDescendantsAfterPropertyUpdate(
-  propertyId: string,
-): Promise<{ categoriesProcessed: number; snapshotsUpdated: number }> {
-  await connection();
-  if (!mongoose.Types.ObjectId.isValid(propertyId)) {
-    return { categoriesProcessed: 0, snapshotsUpdated: 0 };
-  }
-
-  const categories = await Category.find({
-    property: new mongoose.Types.ObjectId(propertyId),
-  })
-    .select("_id")
-    .lean();
-
-  const visited = new Set<string>();
-  let snapshotsUpdated = 0;
-
-  for (const c of categories) {
-    const categoryId = (c._id as any).toString();
-    if (visited.has(categoryId)) continue;
-    const ancestorAttrs = await collectAncestorAttrIds(categoryId);
-    snapshotsUpdated += await pruneSubtree(categoryId, ancestorAttrs, visited);
-  }
-
-  return { categoriesProcessed: categories.length, snapshotsUpdated };
-}
-
 /* -------------------- attribute set result shape ------------------------- */
 
 interface AttributeUnitFamily {
@@ -584,6 +421,8 @@ export interface MappedAttribute {
   options: string[];
   isRequired: boolean;
   isHighlight: boolean;
+  isVariant: boolean;
+  isVariantAttribute: boolean;
   unitFamily: AttributeUnitFamily | null;
   sortOrder: number;
 }
@@ -615,6 +454,7 @@ export async function buildAttributeSetsFromMappings(
         attribute: string;
         isRequired?: boolean;
         isHighlight?: boolean;
+        isVariant?: boolean;
       }[];
     }[];
   }[],
@@ -733,6 +573,8 @@ export async function buildAttributeSetsFromMappings(
           options: attrDoc.option || [],
           isRequired: flags.isRequired,
           isHighlight: flags.isHighlight,
+          isVariant: flags.isVariant,
+          isVariantAttribute: flags.isVariantAttribute,
           unitFamily: uf
             ? { id: uf._id.toString(), name: uf.name, baseUnit: uf.baseUnit }
             : null,

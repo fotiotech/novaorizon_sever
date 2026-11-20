@@ -31,6 +31,9 @@ export interface IOrderProduct {
   name: string;
   quantity: number;
   price: number;
+  /** Variant identity (stable `variantId` on the product) when applicable. */
+  variantId?: string | null;
+  variantLabel?: string | null;
 }
 
 export interface IOrderAddress {
@@ -102,6 +105,8 @@ const OrderProductSchema = new Schema(
     name: { type: String, required: true },
     quantity: { type: Number, required: true },
     price: { type: Number, required: true },
+    variantId: { type: String, default: null },
+    variantLabel: { type: String, default: null },
   },
   { _id: false },
 );

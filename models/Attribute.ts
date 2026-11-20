@@ -17,7 +17,6 @@ export type AttributeType =
 export interface IAttribute {
   code: string;
   unitFamily?: Types.ObjectId | null;
-  isRequired?: boolean;
   name: string;
   sortOrder: number;
   option?: string[];
@@ -39,7 +38,6 @@ const AttributeSchema = new Schema<IAttribute, AttributeModel>(
       ref: "UnitFamily",
       default: null,
     },
-    isRequired: { type: Boolean, default: false },
     name: {
       type: String,
       unique: true,

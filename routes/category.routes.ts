@@ -13,7 +13,6 @@ import {
   listCategories,
   listChildren,
   listChildrenByName,
-  runCategoryInheritance,
   updateCategory,
 } from "../controllers/category.controller.js";
 import { requireAdmin } from "../middleware/auth.middleware.js";
@@ -49,7 +48,6 @@ categoryRouter.get(
   asyncHandler(getCategoryAttributeSets),
 );
 categoryRouter.patch("/:id/property", asyncHandler(assignCategoryProperty));
-categoryRouter.post("/:id/inheritance", asyncHandler(runCategoryInheritance));
 
 // ── Create / update / delete
 categoryRouter.post("/", asyncHandler(createCategory));

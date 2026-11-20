@@ -6,7 +6,7 @@ import AttributeGroup from "../models/AttributeGroup.js";
 import Attribute from "../models/Attribute.js";
 import { connection } from "../config/db.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
-import { pruneDescendantsAfterPropertyUpdate } from "../utils/category-inheritance.js";
+import { rerunInheritanceForCategoryAndDescendants } from "../utils/category-inheritance.js";
 import { toPlain } from "../utils/toPlain.js";
 
 function param(req: Request, key: string): string {
@@ -28,13 +28,20 @@ interface MappingInput {
 
 function toFlags(
   input:
-    | Partial<{ isRequired: boolean; isHighlight: boolean }>
+    | Partial<{
+    isRequired: boolean;
+    isHighlight: boolean;
+    isVariant: boolean;
+    isVariantAttribute: boolean;
+  }>
     | undefined
     | null,
 ) {
   return {
     isRequired: input?.isRequired === true,
     isHighlight: input?.isHighlight === true,
+    isVariant: input?.isVariant === true,
+    isVariantAttribute: input?.isVariantAttribute === true,
   };
 }
 
@@ -134,7 +141,7 @@ export async function updateCategoryPropertyWithMappings(
 
   if (property.readOnly) {
     throw new AppError(
-      "This property is system-managed (inherited). It can only be regenerated via Re-run inheritance.",
+      "This property is system-managed (inherited). It is regenerated automatically when an ancestor changes.",
       400,
     );
   }
@@ -157,15 +164,18 @@ export async function updateCategoryPropertyWithMappings(
 
   await property.save();
 
+  // Rebuild every descendant snapshot so the new mappings are picked up
+  // automatically — no manual "Re-run inheritance" step exists anymore.
   try {
-    const { snapshotsUpdated } = await pruneDescendantsAfterPropertyUpdate(id);
-    if (snapshotsUpdated > 0) {
-      console.log(
-        `[inheritance] Pruned ${snapshotsUpdated} descendant snapshots after property update.`,
-      );
+    const { default: CategoryModel } = await import("../models/Category.js");
+    const affected = await CategoryModel.find({ property: id })
+      .select("_id")
+      .lean();
+    for (const c of affected) {
+      await rerunInheritanceForCategoryAndDescendants(String((c as any)._id));
     }
   } catch (err) {
-    console.error("[inheritance] Prune after property update failed:", err);
+    console.error("[inheritance] Cascade after property update failed:", err);
   }
 
   res.json({ success: true, data: toPlain(property.toObject()) });
@@ -198,21 +208,18 @@ export async function deleteCategoryProperty(
   await CategoryProperty.findByIdAndDelete(id);
   await Category.updateMany({ property: id }, { $unset: { property: "" } });
 
-  const { pruneDescendantSnapshots } =
-    await import("../utils/category-inheritance.js");
-  let snapshotsUpdated = 0;
+  let rebuilt = 0;
   for (const c of affected) {
     try {
-      snapshotsUpdated += await pruneDescendantSnapshots(
-        (c._id as any).toString(),
-      );
+      await rerunInheritanceForCategoryAndDescendants(String((c as any)._id));
+      rebuilt += 1;
     } catch (err) {
-      console.error("[inheritance] Prune failed:", err);
+      console.error("[inheritance] Cascade after property delete failed:", err);
     }
   }
 
   res.json({
     success: true,
-    message: `Category property deleted. ${snapshotsUpdated} descendant snapshot(s) pruned.`,
+    message: `Category property deleted. ${rebuilt} subtree(s) re-inherited.`,
   });
 }

@@ -17,6 +17,8 @@ export interface ICategoryProperty extends Document {
         attribute: mongoose.Types.ObjectId;
         isRequired: boolean;
         isHighlight: boolean;
+        isVariant: boolean;
+        isVariantAttribute: boolean;
       }[];
     }[];
   }[];
@@ -56,6 +58,8 @@ const CategoryPropertySchema = new Schema<ICategoryProperty>(
                 },
                 isRequired: { type: Boolean, default: false },
                 isHighlight: { type: Boolean, default: false },
+                isVariant: { type: Boolean, default: false },
+                isVariantAttribute: { type: Boolean, default: false },
               },
             ],
           },

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { randomUUID } from "node:crypto";
 import slugify from "slugify";
 import Product from "../models/Product.js";
 import "../models/Brand.js";
@@ -184,7 +185,10 @@ async function getCategoryAttributeInfo(
             requiredCodes.push(attr.code);
           }
         }
-        if (groupCode === "variantThemes")
+        // Attributes flagged `isVariant` in the category property define the
+        // variant axes. The group-code convention is kept as a fallback for
+        // properties authored before the flag existed.
+        if (attr.isVariant || groupCode === "variantThemes")
           variantThemeCodes.add(normalizeKey(attr.code));
         if (groupCode === "variantFields")
           variantFieldCodes.add(normalizeKey(attr.code));
@@ -197,9 +201,22 @@ async function getCategoryAttributeInfo(
   return { requiredCodes, variantThemeCodes, variantFieldCodes };
 }
 
+function clampInt(value: unknown, fallback: number): number {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/** Stable identity for a variant row, derived from its axis values. */
+function variantKey(v: any, themes: string[]): string {
+  return themes
+    .map((t) => String(v?.[normalizeKey(t)] ?? v?.[t] ?? ""))
+    .join("|");
+}
+
 function sanitizeVariantData(
   payload: Record<string, any>,
   categoryVariantThemes: Set<string>,
+  existingVariants: any[] = [],
 ): void {
   const wantsVariants = payload.hasVariants === true;
 
@@ -239,6 +256,38 @@ function sanitizeVariantData(
   } else {
     payload.variants = [];
   }
+
+  // Variant inventory is server-managed:
+  //  - `variantId` is generated once and kept stable across saves
+  //  - `reserved` is never taken from the client
+  //  - `quantity` / `lowStockThreshold` are clamped numbers
+  const existingByKey = new Map<string, any>();
+  for (const v of existingVariants ?? []) {
+    existingByKey.set(variantKey(v, declaredThemes), v);
+  }
+
+  payload.variants = payload.variants.map((v: any) => {
+    const prev = existingByKey.get(variantKey(v, declaredThemes));
+    return {
+      ...v,
+      variantId:
+        typeof v.variantId === "string" && v.variantId
+          ? v.variantId
+          : (prev?.variantId ?? randomUUID()),
+      quantity: clampInt(v.quantity ?? prev?.quantity, 0),
+      lowStockThreshold: clampInt(
+        v.lowStockThreshold ?? prev?.lowStockThreshold,
+        5,
+      ),
+      reserved: clampInt(prev?.reserved, 0),
+    };
+  });
+
+  // Keep the product-level stock meaningful for listings/filters.
+  payload.quantity = payload.variants.reduce(
+    (sum: number, v: any) => sum + clampInt(v.quantity, 0),
+    0,
+  );
 
   const allowedKeys = new Set(declaredThemes.map(normalizeKey));
   const raw = payload.variantValues;
@@ -421,9 +470,17 @@ async function prepareProductPayload(formData: any): Promise<PrepareResult> {
   delete payload.keyFeatures;
   delete payload.specifications;
 
+  let existingForVariants: any = null;
+  if (providedId) {
+    existingForVariants = await Product.findById(providedId)
+      .select("variants")
+      .lean();
+  }
+
   sanitizeVariantData(
     payload,
     categoryInfo?.variantThemeCodes ?? new Set<string>(),
+    (existingForVariants?.variants as any[]) ?? [],
   );
 
   let existing: any = null;

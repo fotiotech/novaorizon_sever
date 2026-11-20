@@ -9,7 +9,6 @@ import Attribute from "../models/Attribute.js";
 import { connection } from "../config/db.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 import {
-  applyInheritedPropertyToCategory,
   getCategoryAttributeSets as buildCategoryAttributeSets,
   rerunInheritanceForCategoryAndDescendants,
 } from "../utils/category-inheritance.js";
@@ -245,10 +244,19 @@ async function createOrUpdateCategory(
 
     const previousParentId = existing.parentId?.toString() ?? null;
     const previousPropertyId = existing.property?.toString() ?? null;
+    const previousInherit = existing.inheritProperty === true;
+    const previousName = existing.name;
     const nextPropertyId = propertyId ?? null;
+
+    // Any change that can alter the effective inherited property (or the
+    // generated snapshot's name/code) must cascade — there is no manual
+    // "Re-run inheritance" anymore.
     const cascadeNeeded =
       previousParentId !== resolvedParentId ||
-      previousPropertyId !== nextPropertyId;
+      previousPropertyId !== nextPropertyId ||
+      previousInherit !== wantsInherit ||
+      previousName !== name ||
+      (wantsInherit && !existing.inheritedProperty);
 
     await Category.findByIdAndUpdate(existing._id, { $set: updateData });
 
@@ -272,9 +280,14 @@ async function createOrUpdateCategory(
     inheritedProperty: null,
   });
 
-  res
-    .status(201)
-    .json({ success: true, data: projectForList(created.toObject()) });
+  // Build the inherited snapshot right away: inheritance is declarative, so a
+  // new child must never sit in a "pending sync" state.
+  if (wantsInherit) {
+    await rerunInheritanceForCategoryAndDescendants(created._id.toString());
+  }
+
+  const fresh = (await Category.findById(created._id).lean()) ?? created.toObject();
+  res.status(201).json({ success: true, data: projectForList(fresh as any) });
 }
 
 export async function createCategory(
@@ -312,7 +325,28 @@ export async function deleteCategory(
     await CategoryProperty.deleteOne({ _id: category.inheritedProperty });
   }
 
-  await Category.updateMany({ parentId: id }, { $set: { parentId: null } });
+  // Children become roots: drop their inherited snapshots, since a root has
+  // no ancestors to inherit from.
+  const children: any[] = await Category.find({ parentId: id })
+    .select("_id inheritedProperty")
+    .lean();
+  for (const child of children) {
+    if (child.inheritedProperty) {
+      await CategoryProperty.deleteOne({ _id: child.inheritedProperty });
+    }
+  }
+  await Category.updateMany(
+    { parentId: id },
+    { $set: { parentId: null, inheritProperty: false, inheritedProperty: null } },
+  );
+
+  // Grandchildren used to inherit attributes that came from the removed
+  // branch; rebuild their snapshots from the new (shorter) ancestor chain.
+  for (const child of children) {
+    await rerunInheritanceForCategoryAndDescendants(
+      String((child as any)._id),
+    );
+  }
 
   await mongoose.models.Product?.updateMany(
     { categoryId: id },
@@ -364,37 +398,6 @@ export async function assignCategoryProperty(
   await rerunInheritanceForCategoryAndDescendants(categoryId);
 
   res.json({ success: true });
-}
-
-/* ------------------------ Inheritance runner ----------------------------- */
-
-export async function runCategoryInheritance(
-  req: Request,
-  res: Response,
-): Promise<void> {
-  const categoryId = param(req, "id");
-  await connection();
-  assertValidId(categoryId);
-
-  const category: any = await Category.findById(categoryId)
-    .select("parentId inheritProperty")
-    .lean();
-  if (!category) throw new AppError("Category not found", 404);
-
-  if (!category.parentId) {
-    throw new AppError("Root categories cannot inherit properties.", 400);
-  }
-
-  if (category.inheritProperty !== true) {
-    await Category.findByIdAndUpdate(categoryId, {
-      $set: { inheritProperty: true },
-    });
-  }
-
-  const { warning } = await applyInheritedPropertyToCategory(categoryId);
-
-  if (warning) res.json({ success: true, warning });
-  else res.json({ success: true });
 }
 
 /* -------------------------- Attribute sets ------------------------------- */

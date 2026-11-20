@@ -80,7 +80,6 @@ interface AttributeFormData {
   codes: string[];
   unitFamilies: string[];
   names: string[];
-  isRequired: boolean[];
   sort_orders: number[];
   option?: string[][];
   type: string[];
@@ -91,8 +90,7 @@ export async function createAttribute(
   res: Response,
 ): Promise<void> {
   const formData = (req.body ?? {}) as AttributeFormData;
-  const { codes, unitFamilies, names, isRequired, sort_orders, option, type } =
-    formData;
+  const { codes, unitFamilies, names, sort_orders, option, type } = formData;
 
   if (!Array.isArray(names) || names.length === 0) {
     throw new ValidationError({ names: ["Missing required fields"] });
@@ -120,7 +118,6 @@ export async function createAttribute(
 
     const optionsArr = (option?.[i] || []).map((o) => o.trim()).filter(Boolean);
     const attrType = (type[i] || "text").trim();
-    const attrIsRequired = Boolean(isRequired[i]);
     const attrSortOrder = sort_orders[i] || 0;
 
     const attribute = await Attribute.findOneAndUpdate(
@@ -129,7 +126,6 @@ export async function createAttribute(
         $set: {
           name: rawName,
           unitFamily: unitFamilyId,
-          isRequired: attrIsRequired,
           option: optionsArr,
           type: attrType,
           sortOrder: attrSortOrder,
@@ -149,7 +145,6 @@ interface AttributeUpdateParams {
   code: string;
   unitFamily: string;
   name: string;
-  isRequired: boolean;
   sort_order: number;
   option?: string[];
   type: string;
@@ -181,7 +176,6 @@ export async function updateAttribute(
     code: params.code.trim(),
     unitFamily: unitFamilyId,
     name: params.name.trim(),
-    isRequired: params.isRequired,
     option: optionsArr,
     type: params.type.trim(),
     // NOTE (preserved bug): original writes `sort_order` but the schema field

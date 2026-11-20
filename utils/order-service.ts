@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import Order from "../models/Order.js";
-import Product from "../models/Product.js";
+import { deductOrderItem } from "./inventory.js";
 import Invoice from "../models/Invoice.js";
 import PromotionUsage from "../models/PromotionUsage.js";
 
@@ -109,43 +109,8 @@ async function fulfillOrder(order: any): Promise<void> {
   let shortage = false;
 
   for (const item of order.products ?? []) {
-    const quantity = Number(item.quantity) || 0;
-    if (!item.productId || quantity <= 0) continue;
-
-    // Atomic decrement: the filter guarantees we never go negative even
-    // if two payments are confirmed concurrently.
-    const result = await Product.updateOne(
-      { _id: item.productId, quantity: { $gte: quantity } },
-      { $inc: { quantity: -quantity } },
-    );
-
-    if (result.modifiedCount === 0) {
-      shortage = true;
-      continue;
-    }
-
-    const product: any = await Product.findById(item.productId)
-      .select("quantity lowStockThreshold")
-      .lean();
-    if (!product) continue;
-
-    const remaining = Number(product.quantity) || 0;
-    const low = Number(product.lowStockThreshold) || 5;
-    await Product.updateOne(
-      { _id: item.productId },
-      {
-        $set: {
-          stock_quantity: remaining,
-          stockQuantity: remaining,
-          stockStatus:
-            remaining <= 0 ? "out_of_stock" : remaining <= low ? "low_stock" : "in_stock",
-          stock_status:
-            remaining <= 0 ? "out_of_stock" : remaining <= low ? "low_stock" : "in_stock",
-          lastInventoryUpdate: new Date(),
-          last_inventory_update: new Date(),
-        },
-      },
-    );
+    const outcome = await deductOrderItem(item);
+    if (outcome === "shortage") shortage = true;
   }
 
   await Order.updateOne(
@@ -237,4 +202,3 @@ async function recordPromotionUsage(order: any): Promise<void> {
     );
   }
 }
-

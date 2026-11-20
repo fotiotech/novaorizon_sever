@@ -161,6 +161,45 @@ export type CreateCheckoutOrderResult =
   | { success: true; order: CheckoutOrderSummary; reused: boolean }
   | { success: false; error: string };
 
+function findVariant(product: any, ref: string): any | null {
+  if (!Array.isArray(product?.variants)) return null;
+  const wanted = String(ref);
+  return (
+    product.variants.find(
+      (v: any) =>
+        String(v?.variantId ?? "") === wanted ||
+        String(v?._id ?? "") === wanted ||
+        String(v?.sku ?? "") === wanted ||
+        String(v?.value ?? "") === wanted,
+    ) ?? null
+  );
+}
+
+function variantIdentity(variant: any): string | null {
+  if (!variant) return null;
+  const id = variant.variantId ?? variant._id ?? variant.sku ?? null;
+  return id ? String(id) : null;
+}
+
+function variantLabel(variant: any): string | null {
+  if (!variant) return null;
+  const skip = new Set([
+    "variantId",
+    "_id",
+    "sku",
+    "price",
+    "quantity",
+    "reserved",
+    "lowStockThreshold",
+    "images",
+    "image",
+  ]);
+  const parts = Object.entries(variant)
+    .filter(([k, v]) => !skip.has(k) && v !== null && v !== "" && v !== undefined)
+    .map(([, v]) => String(v));
+  return parts.length ? parts.join(" / ") : null;
+}
+
 export async function createCheckoutOrder(
   input: CreateCheckoutOrderInput,
   actor: CheckoutActor,
@@ -252,6 +291,13 @@ export async function createCheckoutOrder(
       name: string;
       quantity: number;
       price: number;
+      variantId?: string | null;
+      variantLabel?: string | null;
+    }> = [];
+    const variantReservations: Array<{
+      productId: string;
+      variantIndex: number;
+      quantity: number;
     }> = [];
     const promoItems: PromotionCart["items"] = [];
 
@@ -269,7 +315,16 @@ export async function createCheckoutOrder(
         return { success: false, error: "Invalid item quantity." };
       }
 
-      const available = Number(product.quantity) || 0;
+      const variant = item.variant ? findVariant(product, item.variant) : null;
+
+      // Per-variant stock wins; `reserved` holds units promised to open orders.
+      const available = variant
+        ? Math.max(
+            0,
+            (Number(variant.quantity) || 0) - (Number(variant.reserved) || 0),
+          )
+        : Number(product.quantity) || 0;
+
       if (available < quantity) {
         return {
           success: false,
@@ -278,17 +333,9 @@ export async function createCheckoutOrder(
       }
 
       let unitPrice = Number(product.price) || Number(product.listPrice) || 0;
-      if (item.variant && Array.isArray(product.variants)) {
-        const variant = product.variants.find(
-          (v: any) =>
-            String(v?._id ?? "") === String(item.variant) ||
-            String(v?.sku ?? "") === String(item.variant) ||
-            String(v?.value ?? "") === String(item.variant),
-        );
-        const variantPrice = Number(variant?.price);
-        if (Number.isFinite(variantPrice) && variantPrice > 0) {
-          unitPrice = variantPrice;
-        }
+      const variantPrice = Number(variant?.price);
+      if (Number.isFinite(variantPrice) && variantPrice > 0) {
+        unitPrice = variantPrice;
       }
 
       if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
@@ -298,11 +345,31 @@ export async function createCheckoutOrder(
         };
       }
 
+      const reservationId = variantIdentity(variant);
+      if (variant) {
+        const variantIndex = product.variants.findIndex(
+          (v: any) =>
+            String(v?.variantId ?? "") === String(reservationId ?? "") ||
+            String(v?._id ?? "") === String(item.variant ?? "") ||
+            String(v?.sku ?? "") === String(item.variant ?? "") ||
+            String(v?.value ?? "") === String(item.variant ?? ""),
+        );
+        if (variantIndex >= 0) {
+          variantReservations.push({
+            productId: String(product._id),
+            variantIndex,
+            quantity,
+          });
+        }
+      }
+
       orderProducts.push({
         productId: new mongoose.Types.ObjectId(String(product._id)),
         name: clean(product.name, 200) || "Product",
         quantity,
         price: unitPrice,
+        variantId: reservationId,
+        variantLabel: variantLabel(variant),
       });
 
       promoItems.push({
@@ -438,6 +505,22 @@ export async function createCheckoutOrder(
         calculationType: a.calculationType,
       })),
     });
+
+    // Reserve the variant units for this order. Best-effort: quantity was
+    // checked above; the positional increment keeps concurrent orders from
+    // silently overselling the same variant.
+    for (const reservation of variantReservations) {
+      const path = `variants.${reservation.variantIndex}.reserved`;
+      await Product.updateOne(
+        {
+          _id: new mongoose.Types.ObjectId(reservation.productId),
+          [path]: { $exists: true },
+        },
+        { $inc: { [path]: reservation.quantity } },
+      ).catch((err) => {
+        console.error("[createCheckoutOrder] reserve failed:", err);
+      });
+    }
 
     return {
       success: true,
