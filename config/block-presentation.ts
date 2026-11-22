@@ -49,6 +49,7 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
     "cardShape",
     "cardRatio",
     "cardSize",
+    "cardStyle",
     "titlePosition",
     "imagePosition",
     "borderless",
@@ -60,6 +61,7 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
     "cardShape",
     "cardRatio",
     "cardSize",
+    "cardStyle",
     "titlePosition",
     "imagePosition",
     "borderless",
@@ -68,6 +70,7 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
     "alignment",
   ],
   list: [
+    "cardStyle",
     "titlePosition",
     "imagePosition",
     "borderless",
@@ -106,14 +109,13 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
   masonry: [
     "columns",
     "cardRatio",
+    "cardStyle",
     "titlePosition",
     "borderless",
     "rounded",
     "shadow",
     "alignment",
   ],
-  // Compact rectangles with a centred logo and title (chips/tiles).
-  tiles: ["columns", "borderless", "rounded", "shadow"],
 };
 
 /** Fields that only make sense for a given source. */
