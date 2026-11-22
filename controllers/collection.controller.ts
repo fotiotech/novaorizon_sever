@@ -88,8 +88,9 @@ function readCta(body: any) {
     : "none";
   const ctaText = String(body?.ctaText ?? "").trim();
   const ctaLink = String(body?.ctaLink ?? "").trim();
-  // A CTA without both parts is not a CTA.
-  return ctaStyle !== "none" && (!ctaText || !ctaLink)
+  // A CTA needs a link; the label is optional (the storefront supplies a
+  // sensible default when it is empty).
+  return ctaStyle !== "none" && !ctaLink
     ? { ctaStyle: "none" as const, ctaText: undefined, ctaLink: undefined }
     : { ctaStyle, ctaText: ctaText || undefined, ctaLink: ctaLink || undefined };
 }
