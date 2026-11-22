@@ -106,7 +106,9 @@ export async function getEventsSince(
   const since = Number(req.query.since) || Date.now() - 60_000;
   const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
   const data = await getEventsSinceService(since, limit);
-  res.json({ data });
+  // The client uses this as its next cursor so a skewed local clock can never
+  // make the live feed stop advancing.
+  res.json({ data, serverTime: Date.now() });
 }
 
 /* --------------------------- recommendations ---------------------------- */
