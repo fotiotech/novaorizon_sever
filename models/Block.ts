@@ -79,7 +79,6 @@ export interface IBlockSource {
   collectionId?: Types.ObjectId | null;
   categoryId?: Types.ObjectId | null;
   promotionId?: Types.ObjectId | null;
-  bannerIds: Types.ObjectId[];
   promotionMode: (typeof PROMOTION_MODES)[number];
   items: IManualRef[];
 }
@@ -151,7 +150,6 @@ const SourceSchema = new Schema(
       ref: "Promotion",
       default: null,
     },
-    bannerIds: [{ type: Schema.Types.ObjectId, ref: "BannerContent" }],
     promotionMode: { type: String, enum: PROMOTION_MODES, default: "products" },
     items: { type: [ManualRefSchema], default: [] },
   },
@@ -184,20 +182,13 @@ const BlockSchema = new Schema<IBlock, BlockModel>(
 );
 
 BlockSchema.pre("validate", function (this: IBlock) {
-  const t = this.source?.type;
-  if (!t) throw new Error("A content source is required.");
-  if (t === "banner") {
-    const ids = this.source.bannerIds ?? [];
-    if (!ids.length)
-      throw new Error("Banner source requires at least one bannerId.");
-  }
+  if (!this.source?.type) throw new Error("A content source is required.");
 });
 
 BlockSchema.index({ location: 1, status: 1, order: 1 });
 BlockSchema.index({ "source.collectionId": 1 });
 BlockSchema.index({ "source.categoryId": 1 });
 BlockSchema.index({ "source.promotionId": 1 });
-BlockSchema.index({ "source.bannerIds": 1 });
 
 const Block: BlockModel =
   (mongoose.models.Block as BlockModel | undefined) ??

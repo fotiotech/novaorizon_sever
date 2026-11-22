@@ -11,7 +11,6 @@ export interface ICategory {
 
   inheritProperty: boolean;
   property?: Types.ObjectId | null;
-  inheritedProperty?: Types.ObjectId | null;
 
   seoTitle?: string | null;
   seoDesc?: string | null;
@@ -32,7 +31,6 @@ const CategorySchema = new Schema<ICategory, CategoryModel>(
   {
     slug: {
       type: String,
-      unique: true,
       required: [true, "URL slug is required"],
     },
     name: {
@@ -68,11 +66,6 @@ const CategorySchema = new Schema<ICategory, CategoryModel>(
       ref: "CategoryProperty",
       default: null,
     },
-    inheritedProperty: {
-      type: Schema.Types.ObjectId,
-      ref: "CategoryProperty",
-      default: null,
-    },
 
     seoTitle: { type: String, maxlength: 60, default: null },
     seoDesc: { type: String, maxlength: 160, default: null },
@@ -82,7 +75,6 @@ const CategorySchema = new Schema<ICategory, CategoryModel>(
       type: String,
       enum: ["active", "inactive"],
       default: "active",
-      index: true,
     },
   },
   {

@@ -4,6 +4,7 @@ import AttributeGroup from "../models/AttributeGroup.js";
 import CategoryProperty from "../models/CategoryProperty.js";
 import Category from "../models/Category.js";
 import { connection } from "../config/db.js";
+import { pruneEmptyMappings } from "../utils/category-inheritance.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 
 function param(req: Request, key: string): string {
@@ -202,6 +203,7 @@ export async function deleteAttributeGroup(
   );
 
   const categoryProperties = await CategoryProperty.find({});
+  const changedPropertyIds: string[] = [];
   for (const property of categoryProperties) {
     let changed = false;
     property.mappings = (property.mappings || []).map((mapping: any) => ({
@@ -212,11 +214,15 @@ export async function deleteAttributeGroup(
         return !matches;
       }),
     }));
-    if (changed) await property.save();
+    if (changed) {
+      property.mappings = pruneEmptyMappings(property.mappings);
+      await property.save();
+      changedPropertyIds.push(String(property._id));
+    }
   }
 
   await AttributeGroup.findByIdAndDelete(groupObjectId);
-  res.json({ success: true });
+    res.json({ success: true });
 }
 
 export async function getAttributeGroupsUsageMap(
@@ -227,7 +233,7 @@ export async function getAttributeGroupsUsageMap(
 
   const [properties, categories] = await Promise.all([
     CategoryProperty.find({}).select("_id mappings").lean(),
-    Category.find({}).select("_id name property inheritedProperty").lean(),
+    Category.find({}).select("_id name property").lean(),
   ]);
 
   const groupToProps = new Map<string, Set<string>>();
@@ -259,7 +265,6 @@ export async function getAttributeGroupsUsageMap(
       if (!arr.some((x) => x._id === cid)) arr.push(entry);
     };
     add(c.property);
-    add(c.inheritedProperty);
   }
 
   const result: Record<

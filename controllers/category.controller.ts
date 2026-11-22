@@ -8,10 +8,7 @@ import AttributeGroup from "../models/AttributeGroup.js";
 import Attribute from "../models/Attribute.js";
 import { connection } from "../config/db.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
-import {
-  getCategoryAttributeSets as buildCategoryAttributeSets,
-  rerunInheritanceForCategoryAndDescendants,
-} from "../utils/category-inheritance.js";
+import { getCategoryAttributeSets as buildCategoryAttributeSets } from "../utils/category-inheritance.js";
 import { deleteS3Object } from "../utils/s3.js";
 
 /* ------------------------------- helpers ---------------------------------- */
@@ -22,11 +19,11 @@ function param(req: Request, key: string): string {
 }
 
 function projectForList<T extends Record<string, any>>(category: T) {
-  const { inheritedProperty, property, ...rest } = category;
+  // Strip the retired legacy pointer if an un-migrated document still has it.
+  const { inheritedProperty: _legacy, ...rest } = category;
   return {
     ...rest,
-    property: property ?? null,
-    hasInheritedSnapshot: !!inheritedProperty,
+    property: category.property ?? null,
   };
 }
 
@@ -237,32 +234,7 @@ async function createOrUpdateCategory(
       property: propertyId ?? null,
     };
 
-    if (!wantsInherit && existing.inheritedProperty) {
-      await CategoryProperty.deleteOne({ _id: existing.inheritedProperty });
-      updateData.inheritedProperty = null;
-    }
-
-    const previousParentId = existing.parentId?.toString() ?? null;
-    const previousPropertyId = existing.property?.toString() ?? null;
-    const previousInherit = existing.inheritProperty === true;
-    const previousName = existing.name;
-    const nextPropertyId = propertyId ?? null;
-
-    // Any change that can alter the effective inherited property (or the
-    // generated snapshot's name/code) must cascade — there is no manual
-    // "Re-run inheritance" anymore.
-    const cascadeNeeded =
-      previousParentId !== resolvedParentId ||
-      previousPropertyId !== nextPropertyId ||
-      previousInherit !== wantsInherit ||
-      previousName !== name ||
-      (wantsInherit && !existing.inheritedProperty);
-
     await Category.findByIdAndUpdate(existing._id, { $set: updateData });
-
-    if (cascadeNeeded) {
-      await rerunInheritanceForCategoryAndDescendants(existing._id.toString());
-    }
 
     const updated = await Category.findById(existing._id).lean();
     res.json({ success: true, data: projectForList(updated as any) });
@@ -277,14 +249,7 @@ async function createOrUpdateCategory(
     imageUrl: imageUrl ?? [],
     inheritProperty: wantsInherit,
     property: propertyId ?? null,
-    inheritedProperty: null,
   });
-
-  // Build the inherited snapshot right away: inheritance is declarative, so a
-  // new child must never sit in a "pending sync" state.
-  if (wantsInherit) {
-    await rerunInheritanceForCategoryAndDescendants(created._id.toString());
-  }
 
   const fresh = (await Category.findById(created._id).lean()) ?? created.toObject();
   res.status(201).json({ success: true, data: projectForList(fresh as any) });
@@ -316,37 +281,14 @@ export async function deleteCategory(
   await connection();
   assertValidId(id);
 
-  const category: any = await Category.findById(id)
-    .select("inheritedProperty")
-    .lean();
+  const category = await Category.findById(id).select("_id").lean();
   if (!category) throw new AppError("Category not found", 404);
 
-  if (category.inheritedProperty) {
-    await CategoryProperty.deleteOne({ _id: category.inheritedProperty });
-  }
-
-  // Children become roots: drop their inherited snapshots, since a root has
-  // no ancestors to inherit from.
-  const children: any[] = await Category.find({ parentId: id })
-    .select("_id inheritedProperty")
-    .lean();
-  for (const child of children) {
-    if (child.inheritedProperty) {
-      await CategoryProperty.deleteOne({ _id: child.inheritedProperty });
-    }
-  }
+  // Children become roots: inheritance has nothing left to merge.
   await Category.updateMany(
     { parentId: id },
-    { $set: { parentId: null, inheritProperty: false, inheritedProperty: null } },
+    { $set: { parentId: null, inheritProperty: false } },
   );
-
-  // Grandchildren used to inherit attributes that came from the removed
-  // branch; rebuild their snapshots from the new (shorter) ancestor chain.
-  for (const child of children) {
-    await rerunInheritanceForCategoryAndDescendants(
-      String((child as any)._id),
-    );
-  }
 
   await mongoose.models.Product?.updateMany(
     { categoryId: id },
@@ -394,8 +336,6 @@ export async function assignCategoryProperty(
 
   category.property = next ? new Types.ObjectId(next) : null;
   await category.save();
-
-  await rerunInheritanceForCategoryAndDescendants(categoryId);
 
   res.json({ success: true });
 }

@@ -27,7 +27,7 @@ function toFlags(
   };
 }
 
-function mapInputMappings(
+export function mapInputMappings(
   mappings: {
     set: string;
     groups: {
@@ -126,7 +126,7 @@ function coerceToObjectId(value: any): mongoose.Types.ObjectId | null {
   return null;
 }
 
-function normalizeMappings(mappings: any[]): any[] {
+export function normalizeMappings(mappings: any[]): any[] {
   if (!Array.isArray(mappings)) return [];
   return mappings.map((m: any) => ({
     set: m?.set?.toString?.() ?? m?.set ?? "",
@@ -147,7 +147,7 @@ function normalizeMappings(mappings: any[]): any[] {
   }));
 }
 
-function mergeMappingsWithPrecedence(layers: any[][]): any[] {
+export function mergeMappingsWithPrecedence(layers: any[][]): any[] {
   const combinedMap = new Map<
     string,
     {
@@ -204,6 +204,25 @@ function mergeMappingsWithPrecedence(layers: any[][]): any[] {
   }));
 }
 
+/**
+ * Removes groups with no attributes and set-mappings with no groups.
+ *
+ * Deletions in the attribute library used to leave these empty shells behind,
+ * which made the property editor and the category viewer report stale counts
+ * ("2 sets", "1 selected") for attributes that no longer existed.
+ */
+export function pruneEmptyMappings(mappings: any[]): any[] {
+  if (!Array.isArray(mappings)) return [];
+  return mappings
+    .map((mapping) => ({
+      ...mapping,
+      groups: (mapping?.groups ?? []).filter(
+        (group: any) => (group?.attributes ?? []).length > 0,
+      ),
+    }))
+    .filter((mapping) => (mapping?.groups ?? []).length > 0);
+}
+
 /* ------------------------- collect ancestor props ------------------------- */
 
 export async function collectAncestorProperties(
@@ -256,153 +275,45 @@ export async function collectAncestorProperties(
   };
 }
 
-/* ------------------------- inherited property code ------------------------ */
-
-function generatePropertyCode(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
-    .trim()
-    .replace(/\s+/g, "_");
-}
-
-function generateInheritedPropertyCode(
-  name: string,
+/**
+ * Effective mappings for a category, computed from the ancestor chain on
+ * demand. Snapshots are a cache and are no longer read here — a stale snapshot
+ * can never influence the result.
+ */
+export async function resolveEffectiveMappings(
   categoryId: string,
-): string {
-  const base = generatePropertyCode(name) || "category";
-  return `${base}_inherited_${categoryId.slice(-8)}`;
-}
-
-/* ----------------------- ensure / update snapshot doc --------------------- */
-
-export async function ensureCategoryPropertyFromMappings(
-  categoryId: string,
-  mappings: any[],
-): Promise<string | null> {
-  const category = await Category.findById(categoryId).select(
-    "name inheritedProperty",
-  );
-  if (!category) return null;
-
-  if (mappings.length === 0) {
-    if (category.inheritedProperty) {
-      await CategoryProperty.deleteOne({ _id: category.inheritedProperty });
-    }
-    await Category.findByIdAndUpdate(categoryId, {
-      $set: { inheritedProperty: null },
-    });
-    return null;
-  }
-
-  const code = generateInheritedPropertyCode(category.name, categoryId);
-  const propertyName = category.name;
-  const propertyDescription = `Auto-generated inherited property for ${category.name}`;
-  const prepared = mapInputMappings(mappings);
-
-  let property = await CategoryProperty.findOne({ code });
-  if (property) {
-    property.name = propertyName;
-    property.description = propertyDescription;
-    property.readOnly = true;
-    property.mappings = prepared as any;
-    await property.save();
-  } else {
-    property = new CategoryProperty({
-      code,
-      name: propertyName,
-      description: propertyDescription,
-      readOnly: true,
-      mappings: prepared as any,
-    });
-    await property.save();
-  }
-
-  const previousId = category.inheritedProperty?.toString();
-  if (previousId && previousId !== property._id.toString()) {
-    await CategoryProperty.deleteOne({ _id: previousId });
-  }
-
-  await Category.findByIdAndUpdate(categoryId, {
-    $set: { inheritedProperty: property._id },
-  });
-
-  return property._id.toString();
-}
-
-/* -------------------------- apply inheritance ---------------------------- */
-
-export async function applyInheritedPropertyToCategory(
-  categoryId: string,
-): Promise<{ propertyId: string | null; warning?: string }> {
+  cache?: Map<string, any[]>,
+): Promise<any[]> {
   await connection();
+  if (!mongoose.Types.ObjectId.isValid(categoryId)) return [];
+
+  const cached = cache?.get(categoryId);
+  if (cached) return cached;
 
   const category: any = await Category.findById(categoryId)
-    .select("property")
+    .select("property inheritProperty parentId")
     .lean();
-  if (!category) return { propertyId: null, warning: "Category not found." };
+  if (!category) return [];
 
   let ownMappings: any[] = [];
   if (category.property) {
-    const ownProp: any = await CategoryProperty.findById(
-      category.property,
-    ).lean();
+    const ownProp: any = await CategoryProperty.findById(category.property)
+      .select("mappings")
+      .lean();
     if (ownProp?.mappings) ownMappings = normalizeMappings(ownProp.mappings);
   }
 
-  const { mappings: ancestorMappings } =
-    await collectAncestorProperties(categoryId);
-  const merged = mergeMappingsWithPrecedence([ancestorMappings, ownMappings]);
-
-  if (merged.length === 0) {
-    await ensureCategoryPropertyFromMappings(categoryId, []);
-    return { propertyId: null, warning: "No properties to inherit or merge." };
+  let ancestorMappings: any[] = [];
+  if (category.inheritProperty === true && category.parentId) {
+    const ancestors = await collectAncestorProperties(categoryId);
+    ancestorMappings = ancestors.mappings;
   }
 
-  const propertyId = await ensureCategoryPropertyFromMappings(
-    categoryId,
-    merged,
+  const merged = pruneEmptyMappings(
+    mergeMappingsWithPrecedence([ancestorMappings, ownMappings]),
   );
-  return { propertyId };
-}
-
-/* ---------------------------- cascade rerun ------------------------------ */
-
-export async function rerunInheritanceForCategoryAndDescendants(
-  categoryId: string,
-): Promise<void> {
-  await connection();
-  if (!mongoose.Types.ObjectId.isValid(categoryId)) return;
-
-  const visited = new Set<string>();
-
-  async function walk(nodeId: string): Promise<void> {
-    if (visited.has(nodeId)) return;
-    visited.add(nodeId);
-
-    const node: any = await Category.findById(nodeId)
-      .select("inheritProperty parentId")
-      .lean();
-    if (!node) return;
-
-    if (node.inheritProperty === true && node.parentId) {
-      try {
-        await applyInheritedPropertyToCategory(nodeId);
-      } catch (err) {
-        console.error(
-          `[inheritance] Failed to re-run for category ${nodeId}:`,
-          err,
-        );
-      }
-    }
-
-    const children: any[] = await Category.find({ parentId: nodeId })
-      .select("_id")
-      .lean();
-    for (const child of children) await walk(child._id.toString());
-  }
-
-  await walk(categoryId);
+  cache?.set(categoryId, merged);
+  return merged;
 }
 
 /* -------------------- attribute set result shape ------------------------- */
@@ -594,6 +505,9 @@ export async function buildAttributeSetsFromMappings(
 
       return mappingGroups
         .filter((g: any) => {
+          const gId = g._id?.toString() ?? "";
+          // Skip groups with no attributes left (e.g. after a deletion).
+          if ((groupAttrMap[gId] ?? []).length === 0) return false;
           const gParent = g.parentId?.toString() || null;
           if (parentId === null) return gParent === null;
           return gParent === parentId;
@@ -631,8 +545,8 @@ export async function buildAttributeSetsFromMappings(
 /**
  * Resolve a category's effective attribute-set payload.
  *
- * Uses `inheritedProperty` when the category is inheriting from a parent,
- * otherwise falls back to its own `property`. Returns `[]` for any of:
+ * Merges the ancestor chain when the category inherits, then falls back to the
+ * category's own `property`. Returns `[]` for any of:
  *   - invalid ID
  *   - category not found
  *   - no effective property assigned
@@ -643,26 +557,14 @@ export async function buildAttributeSetsFromMappings(
  */
 export async function getCategoryAttributeSets(
   categoryId: string,
+  cache?: Map<string, any[]>,
 ): Promise<AttributeSetResult[]> {
   await connection();
   if (!mongoose.Types.ObjectId.isValid(categoryId)) return [];
 
-  const category: any = await Category.findById(categoryId)
-    .select("property inheritedProperty inheritProperty parentId")
-    .lean();
-  if (!category) return [];
+  // Resolve from the ancestor chain (never from the persisted snapshot).
+  const mappings = await resolveEffectiveMappings(categoryId, cache);
+  if (mappings.length === 0) return [];
 
-  const isRoot = !category.parentId;
-  const wantsInheritance = category.inheritProperty === true && !isRoot;
-
-  const effectiveId =
-    wantsInheritance && category.inheritedProperty
-      ? category.inheritedProperty
-      : category.property;
-  if (!effectiveId) return [];
-
-  const property: any = await CategoryProperty.findById(effectiveId).lean();
-  if (!property) return [];
-
-  return buildAttributeSetsFromMappings(property.mappings);
+  return buildAttributeSetsFromMappings(mappings);
 }

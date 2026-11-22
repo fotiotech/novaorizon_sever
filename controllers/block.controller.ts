@@ -1,7 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Block from "../models/Block.js";
-import BannerContent from "../models/BannerContent.js";
 import { Collection } from "../models/Collection.js";
 import Category from "../models/Category.js";
 import Promotion from "../models/Promotion.js";
@@ -23,7 +22,6 @@ import {
   normalizePresentation,
 } from "../utils/block-presentation.js";
 
-const MAX_BANNERS_PER_BLOCK = 20;
 
 function param(req: Request, key: string): string {
   const raw = req.params[key];
@@ -68,15 +66,6 @@ function clamp(n: number, lo: number, hi: number) {
 
 
 
-function readIdArray(raw: any, limit: number): string[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter(
-      (x): x is string =>
-        typeof x === "string" && mongoose.Types.ObjectId.isValid(x),
-    )
-    .slice(0, limit);
-}
 
 /* ----------------------- source preview --------------------------------- */
 
@@ -151,22 +140,6 @@ export async function getSourcePreview(
     });
     return;
   }
-  if (sourceType === "banner") {
-    const doc: any = await BannerContent.findById(id)
-      .select("name image heading")
-      .lean();
-    if (!doc) throw new AppError("Not found", 404);
-    res.json({
-      data: {
-        _id: String(doc._id),
-        name: doc.name,
-        imageUrl: doc.image || null,
-        meta: { headline: doc.heading?.title ?? "" },
-      },
-    });
-    return;
-  }
-
   throw new ValidationError({ sourceType: ["Unsupported source type"] });
 }
 
@@ -223,11 +196,6 @@ function parseBlockBody(body: any): Parsed {
       PROMOTION_MODES,
       "products",
     );
-  } else if (sourceType === "banner") {
-    const ids = readIdArray(body?.source?.bannerIds, MAX_BANNERS_PER_BLOCK);
-    if (ids.length === 0)
-      return { ok: false, error: "Select at least one banner" };
-    source.bannerIds = ids.map((id) => new mongoose.Types.ObjectId(id));
   } else if (sourceType === "manual") {
     const raw = Array.isArray(body?.source?.items) ? body.source.items : [];
     const items = raw
@@ -249,39 +217,29 @@ function parseBlockBody(body: any): Parsed {
     source.items = items;
   }
 
-  const heading =
-    sourceType === "banner"
-      ? { title: "", subtitle: "", showHeading: false }
-      : {
-          title: String(body?.heading?.title ?? "").trim(),
-          subtitle: String(body?.heading?.subtitle ?? "").trim(),
-          showHeading: readBool(body?.heading?.showHeading, true),
-        };
+  const heading = {
+    title: String(body?.heading?.title ?? "").trim(),
+    subtitle: String(body?.heading?.subtitle ?? "").trim(),
+    showHeading: readBool(body?.heading?.showHeading, true),
+  };
 
-  const cta =
-    sourceType === "banner"
-      ? { text: "", link: "", style: "none" as const }
-      : parseCta(body);
+  const cta = parseCta(body);
   if (cta.style !== "none" && !cta.link)
     return { ok: false, error: "CTA requires a link" };
-
-  // A banner source always renders as a banner; keep the pair consistent
-  // instead of letting the editor store an unusable combination.
-  const effectiveDisplay = sourceType === "banner" ? "banner" : display;
 
   const presentation = normalizePresentation(
     body?.presentation ?? {
       displayConfig: body?.displayConfig,
       sourceStyles: body?.sourceStyles,
     },
-    effectiveDisplay,
+    display,
     sourceType,
   );
 
   const doc = {
     name,
     location,
-    display: effectiveDisplay,
+    display,
     source,
     heading,
     presentation,
@@ -343,25 +301,10 @@ export async function getBlockById(req: Request, res: Response): Promise<void> {
 
 /* ---------------------------- mutations --------------------------------- */
 
-async function countMissingBanners(ids: any[]): Promise<number> {
-  if (!ids.length) return 0;
-  const found = await BannerContent.countDocuments({ _id: { $in: ids } });
-  return ids.length - found;
-}
-
 export async function createBlock(req: Request, res: Response): Promise<void> {
   const parsed = parseBlockBody(req.body ?? {});
   if (!parsed.ok) throw new ValidationError({ _form: [parsed.error] });
   await connection();
-
-  if (parsed.doc.source.type === "banner") {
-    const missing = await countMissingBanners(parsed.doc.source.bannerIds);
-    if (missing > 0)
-      throw new AppError(
-        `${missing} of the selected banners were deleted.`,
-        409,
-      );
-  }
 
   const doc = new Block(parsed.doc);
   await doc.save();
@@ -378,15 +321,6 @@ export async function updateBlock(req: Request, res: Response): Promise<void> {
   const parsed = parseBlockBody(req.body ?? {});
   if (!parsed.ok) throw new ValidationError({ _form: [parsed.error] });
   await connection();
-
-  if (parsed.doc.source.type === "banner") {
-    const missing = await countMissingBanners(parsed.doc.source.bannerIds);
-    if (missing > 0)
-      throw new AppError(
-        `${missing} of the selected banners were deleted.`,
-        409,
-      );
-  }
 
   const updated = await Block.findByIdAndUpdate(
     id,

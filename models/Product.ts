@@ -114,8 +114,6 @@ const ProductSchema = new Schema(
       type: String,
       trim: true,
       lowercase: true,
-      index: true,
-      unique: true,
     },
     categoryId: {
       type: Schema.Types.ObjectId,

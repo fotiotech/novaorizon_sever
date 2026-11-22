@@ -8,7 +8,6 @@ import {
 import { getEntityConfig } from "./entity-registry.js";
 import { buildProductQueryFromScope } from "./content-query.js";
 import Product from "../models/Product.js";
-import { BannerContent } from "../models/BannerContent.js";
 import {
   type BlockAnimation,
   type BlockAlignment,
@@ -64,29 +63,6 @@ export interface ResolvedDisplayConfig {
 
 export type ResolvedSourceStyles = BlockSourceStyles;
 
-export interface ResolvedBanner {
-  _id: string;
-  name: string;
-  /** image | video | html — decides how the slide is rendered. */
-  type: string;
-  eyebrow: string;
-  body: string;
-  heading: { title: string; subtitle: string };
-  image: string | null;
-  imageAlt: string;
-  videoUrl: string;
-  html: string;
-  link: string;
-  openInNewTab: boolean;
-  overlay: string;
-  ratio: string;
-  size: string;
-  align: string;
-  position: string;
-  theme: string;
-  cta: ResolvedCta;
-}
-
 export interface ResolvedBlock {
   block: {
     _id: string;
@@ -100,7 +76,6 @@ export interface ResolvedBlock {
     limit: number;
   };
   items: NormalizedContentItem[];
-  banners?: ResolvedBanner[];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -185,81 +160,6 @@ async function resolvePromotionSource(
   return (docs as any[]).map((d) => normalizeContentItem(d, "Product"));
 }
 
-async function resolveBanners(bannerIds: any[]): Promise<ResolvedBanner[]> {
-  if (!bannerIds || bannerIds.length === 0) return [];
-
-  const validIds = bannerIds
-    .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
-    .map((id) => new mongoose.Types.ObjectId(String(id)));
-
-  if (validIds.length === 0) return [];
-
-  // Only live banners are resolved: inactive ones and banners outside their
-  // scheduling window are skipped, keeping the block's own ordering.
-  const now = new Date();
-  const docs: any[] = await BannerContent.find({
-    _id: { $in: validIds },
-    // Missing status (legacy rows) counts as active.
-    status: { $ne: "inactive" },
-    $and: [
-      { $or: [{ startAt: null }, { startAt: { $lte: now } }] },
-      { $or: [{ endAt: null }, { endAt: { $gte: now } }] },
-    ],
-  }).lean();
-
-  const byId = new Map(docs.map((d) => [String(d._id), d]));
-
-  const out: ResolvedBanner[] = [];
-  for (const id of validIds) {
-    const d = byId.get(String(id));
-    if (!d) continue;
-    out.push({
-      _id: String(d._id),
-      name: d.name ?? "",
-      type: d.type ?? "image",
-      eyebrow: d.eyebrow ?? "",
-      body: d.body ?? "",
-      heading: {
-        title: d.heading?.title ?? "",
-        subtitle: d.heading?.subtitle ?? "",
-      },
-      image: d.image || null,
-      imageAlt: d.imageAlt ?? "",
-      videoUrl: d.videoUrl ?? "",
-      html: d.html ?? "",
-      link: d.link ?? "",
-      openInNewTab: Boolean(d.openInNewTab),
-      overlay: d.overlay ?? "gradient",
-      ratio: d.ratio ?? "1:1",
-      size: d.size ?? "md",
-      align: d.align ?? "left",
-      position: d.position ?? "center",
-      theme: d.theme ?? "light",
-      cta: {
-        text: d.cta?.text ?? "",
-        link: d.cta?.link ?? "",
-        style: (d.cta?.style ?? "none") as ResolvedCta["style"],
-      },
-    });
-  }
-  return out;
-}
-
-function buildItemsFromBanners(
-  blockId: string,
-  banners: ResolvedBanner[],
-): NormalizedContentItem[] {
-  return banners.map((b, i) => ({
-    _id: `${blockId}-banner-${i}-${b._id}`,
-    name: b.heading.title || b.name,
-    image: b.image,
-    description: b.body || null,
-    href: b.link || b.cta.link || "#",
-    contentType: "Page",
-    badge: b.eyebrow || null,
-  }));
-}
-
 /* -------------------------------------------------------------------------- */
 /*                                 resolveBlock                               */
 /* -------------------------------------------------------------------------- */
@@ -304,23 +204,6 @@ export async function resolveBlock(
   };
 
   const source = raw.source ?? {};
-
-  if (source.type === "banner") {
-    const banners = await resolveBanners(source.bannerIds ?? []);
-    if (banners.length === 0) return null;
-
-    const items = buildItemsFromBanners(blockMeta._id, banners);
-
-    return {
-      block: {
-        ...blockMeta,
-        heading: { title: "", subtitle: "", showHeading: false },
-        cta: { text: "", link: "", style: "none" },
-      },
-      items,
-      banners,
-    };
-  }
 
   let items: NormalizedContentItem[] = [];
   const limit = blockMeta.limit;

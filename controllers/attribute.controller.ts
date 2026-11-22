@@ -5,6 +5,7 @@ import AttributeGroup from "../models/AttributeGroup.js";
 import CategoryProperty from "../models/CategoryProperty.js";
 import Category from "../models/Category.js";
 import { connection } from "../config/db.js";
+import { pruneEmptyMappings } from "../utils/category-inheritance.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 import UnitFamily from "../models/UnitFamily.js";
 
@@ -206,6 +207,7 @@ export async function deleteAttribute(
   }
   await connection();
 
+  const changedPropertyIds = new Set<string>();
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
@@ -238,9 +240,10 @@ export async function deleteAttribute(
         }));
 
         if (changed) {
+          changedPropertyIds.add(String(property._id));
           await CategoryProperty.findByIdAndUpdate(
             property._id,
-            { $set: { mappings: newMappings } },
+            { $set: { mappings: pruneEmptyMappings(newMappings) } },
             { session },
           );
         }
@@ -250,6 +253,7 @@ export async function deleteAttribute(
       if (!deleted) throw new AppError("Attribute not found", 404);
     });
 
+    
     res.json({ success: true });
   } catch (error) {
     console.error("[deleteAttribute]", error);
@@ -271,7 +275,7 @@ export async function getAttributesUsageMap(
 
   const [properties, categories, groups] = await Promise.all([
     CategoryProperty.find({}).select("_id mappings").lean(),
-    Category.find({}).select("_id name property inheritedProperty").lean(),
+    Category.find({}).select("_id name property").lean(),
     AttributeGroup.find({}).select("_id name code").lean(),
   ]);
 
@@ -336,7 +340,6 @@ export async function getAttributesUsageMap(
       if (!arr.some((x) => x._id === cid)) arr.push(entry);
     };
     add(c.property);
-    add(c.inheritedProperty);
   }
 
   const result: Record<

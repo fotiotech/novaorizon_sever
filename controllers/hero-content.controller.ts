@@ -5,6 +5,7 @@ import TrustBadge from "../models/TrustBadge.js";
 import { connection } from "../config/db.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 import { deleteS3Object } from "../utils/s3.js";
+import { revalidateClientTag } from "../utils/revalidate-client.js";
 
 function param(req: Request, key: string): string {
   const raw = req.params[key];
@@ -173,6 +174,7 @@ export async function createHeroContent(
     trustBadges: parsedBadges.badges,
   });
   await hero.save();
+  void revalidateClientTag("home-hero");
 
   res.status(201).json({ success: true, data: serializeHero(hero.toObject()) });
 }
@@ -218,6 +220,7 @@ export async function updateHeroContent(
     { new: true, runValidators: true },
   );
   if (!updated) throw new AppError("Hero content not found", 404);
+  void revalidateClientTag("home-hero");
 
   res.json({ success: true, data: serializeHero(updated.toObject()) });
 }
@@ -244,6 +247,7 @@ export async function deleteHeroContent(
   }
 
   await hero.deleteOne();
+  void revalidateClientTag("home-hero");
   res.json({ success: true });
 }
 

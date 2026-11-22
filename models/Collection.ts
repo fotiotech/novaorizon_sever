@@ -1,11 +1,7 @@
 import mongoose, { Schema, Types, Model, HydratedDocument } from "mongoose";
 import {
   TARGET_TYPES,
-  DISPLAY_LAYOUTS,
-  CARD_SHAPES,
-  CTA_STYLES,
   COLLECTION_TYPES,
-  DEFAULT_COLLECTION_DISPLAY,
   type TargetType,
 } from "../config/content.constants.js";
 
@@ -14,14 +10,6 @@ export interface ICollectionRule {
   operator: "$in" | "$nin" | "$eq" | "$ne" | "$lt" | "$lte" | "$gt" | "$gte";
   value: any;
   position: number;
-}
-
-export interface ICollectionDisplay {
-  layout: (typeof DISPLAY_LAYOUTS)[number];
-  columns: number;
-  gap: number;
-  showImages: boolean;
-  cardShape: (typeof CARD_SHAPES)[number];
 }
 
 export interface ICollectionSort {
@@ -40,13 +28,8 @@ export interface ICollection {
   items: Types.ObjectId[];
   rules: ICollectionRule[];
   sort?: ICollectionSort | null;
-  display: ICollectionDisplay;
-  ctaText?: string | null;
-  ctaLink?: string | null;
-  ctaStyle: (typeof CTA_STYLES)[number];
   status: "active" | "inactive";
   order: number;
-  showName: boolean;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -68,37 +51,6 @@ const RuleSchema = new Schema(
   { _id: false },
 );
 
-const DisplaySchema = new Schema(
-  {
-    layout: {
-      type: String,
-      enum: DISPLAY_LAYOUTS,
-      default: DEFAULT_COLLECTION_DISPLAY.layout,
-    },
-    columns: {
-      type: Number,
-      default: DEFAULT_COLLECTION_DISPLAY.columns,
-      min: 1,
-      max: 6,
-    },
-    gap: {
-      type: Number,
-      default: DEFAULT_COLLECTION_DISPLAY.gap,
-      min: 0,
-      max: 64,
-    },
-    showImages: {
-      type: Boolean,
-      default: DEFAULT_COLLECTION_DISPLAY.showImages,
-    },
-    cardShape: {
-      type: String,
-      enum: CARD_SHAPES,
-      default: DEFAULT_COLLECTION_DISPLAY.cardShape,
-    },
-  },
-  { _id: false },
-);
 
 const SortSchema = new Schema(
   {
@@ -133,15 +85,10 @@ const CollectionSchema = new Schema<ICollection, CollectionModel>(
     rules: { type: [RuleSchema], default: [] },
 
     sort: { type: SortSchema, default: undefined },
-    display: { type: DisplaySchema, default: () => ({}) },
 
-    ctaText: { type: String, default: null },
-    ctaLink: { type: String, default: null },
-    ctaStyle: { type: String, enum: CTA_STYLES, default: "none" },
 
     status: { type: String, enum: ["active", "inactive"], default: "active" },
     order: { type: Number, default: 0, min: 0 },
-    showName: { type: Boolean, default: true },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } },
 );
@@ -168,7 +115,6 @@ export default Collection;
 
 export {
   TARGET_TYPES,
-  DISPLAY_LAYOUTS,
   CARD_SHAPES,
   CTA_STYLES,
   COLLECTION_TYPES,

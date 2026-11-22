@@ -48,6 +48,10 @@ function firstImage(doc: any): string | null {
   if (Array.isArray(doc.images) && doc.images.length > 0) return doc.images[0];
   if (Array.isArray(doc.imageUrl) && doc.imageUrl.length > 0)
     return doc.imageUrl[0];
+  // `imageUrl` is a plain string on most entities (promotions, brands, …).
+  if (typeof doc.imageUrl === "string" && doc.imageUrl.trim()) {
+    return doc.imageUrl.trim();
+  }
   return doc.image ?? doc.mainImage ?? doc.logoUrl ?? doc.featuredImage ?? null;
 }
 
@@ -129,7 +133,7 @@ function normalizePromotion(doc: any): NormalizedContentItem {
   return {
     _id: String(doc._id),
     name: doc.name || "Untitled",
-    image: null,
+    image: firstImage(doc),
     description: doc.description ?? null,
     href: buildHref("Promotion", String(doc._id), null),
     contentType: "Promotion",

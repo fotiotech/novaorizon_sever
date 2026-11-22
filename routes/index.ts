@@ -35,7 +35,6 @@ import { trustBadgeRouter } from "./trust-badge.routes.js";
 import { uploadRouter } from "./upload.routes.js";
 import { searchRouter } from "./search.routes.js";
 import { analyticRouter } from "./analytic.routes.js";
-import { bannerContentRouter } from "./banner-content.routes.js";
 import { heroContentRouter } from "./hero-content.routes.js";
 import { campaignRouter } from "./campaign.routes.js";
 import { facebookAdsRouter } from "./facebook-ads.routes.js";
@@ -94,7 +93,6 @@ apiRouter.use("/shipping", shippingRouter); // ← new
 apiRouter.use("/trust-badges", trustBadgeRouter); // ← new
 apiRouter.use("/upload", uploadRouter); // ← new
 apiRouter.use("/analytics", analyticRouter); // ← new
-apiRouter.use("/banners", bannerContentRouter); // ← new
 apiRouter.use("/hero-content", heroContentRouter); // ← new
 apiRouter.use("/blocks", blockRouter);
 apiRouter.use("/campaigns", campaignRouter);

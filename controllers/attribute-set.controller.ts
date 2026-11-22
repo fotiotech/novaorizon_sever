@@ -117,5 +117,6 @@ export async function deleteAttributeSet(
   const deleted = await AttributeSet.findByIdAndDelete(setObjectId);
   if (!deleted) throw new AppError("Attribute set not found", 404);
 
+  
   res.json({ success: true });
 }

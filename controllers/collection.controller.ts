@@ -6,10 +6,7 @@ import {
   type TargetType,
 } from "../models/Collection.js";
 import {
-  CARD_SHAPES,
-  CTA_STYLES,
   COLLECTION_TYPES,
-  DEFAULT_COLLECTION_DISPLAY,
   COLLECTION_MANUAL_LIMIT,
 } from "../config/collection-types.js";
 import { buildQueryFromRules } from "../utils/content-query.js";
@@ -81,41 +78,7 @@ function validateRecommendation(
   return null;
 }
 
-function readDisplay(body: any) {
-  const DEF = DEFAULT_COLLECTION_DISPLAY;
-  const d = body?.display ?? {};
-  const cardShape = d.cardShape || DEF.cardShape;
-  if (!(CARD_SHAPES as readonly string[]).includes(cardShape)) {
-    return { error: "Invalid card shape" as const };
-  }
-  const showImages =
-    d.showImages === undefined ? DEF.showImages : d.showImages === true;
-  return {
-    display: {
-      layout: d.layout || DEF.layout,
-      columns: Number(d.columns) || DEF.columns,
-      gap: Number(d.gap) || DEF.gap,
-      showImages,
-      cardShape,
-    },
-  };
-}
 
-function readCta(body: any) {
-  const raw = String(body?.ctaStyle ?? "none");
-  const ctaStyle = (CTA_STYLES as readonly string[]).includes(raw)
-    ? raw
-    : "none";
-  const ctaText = String(body?.ctaText ?? "").trim();
-  const ctaLink = String(body?.ctaLink ?? "").trim();
-  const effective =
-    ctaStyle !== "none" && (!ctaText || !ctaLink) ? "none" : ctaStyle;
-  return {
-    ctaText: ctaText || undefined,
-    ctaLink: ctaLink || undefined,
-    ctaStyle: effective,
-  };
-}
 
 function readSort(body: any) {
   const field = String(body?.sort?.field ?? "").trim();
@@ -195,14 +158,9 @@ export async function getResolvedCollections(
           targetType: c.targetType,
           rules: c.rules,
           items: c.items,
-          display: c.display ?? {},
-          ctaText: c.ctaText ?? null,
-          ctaLink: c.ctaLink ?? null,
-          ctaStyle: c.ctaStyle ?? "none",
           status: c.status,
           order: c.order,
           sort: c.sort ?? null,
-          showName: c.showName,
           recommendationType: c.recommendationType ?? null,
           recommendationLimit: c.recommendationLimit ?? null,
           created_at: c.created_at,
@@ -252,11 +210,6 @@ export async function createCollection(
       _form: [`Manual collections unsupported for ${cfg.label}`],
     });
 
-  const displayResult = readDisplay(body);
-  if ("error" in displayResult)
-    throw new ValidationError({ display: [displayResult.error as string] });
-  const { display } = displayResult;
-  const { ctaText, ctaLink, ctaStyle } = readCta(body);
   const sort = readSort(body);
 
   let rules: any[] = [];
@@ -307,12 +260,7 @@ export async function createCollection(
     items: type === "manual" ? items : [],
     recommendationType,
     recommendationLimit,
-    display,
-    ctaText,
-    ctaLink,
-    ctaStyle,
     order: Number(body.order) || 0,
-    showName: body.showName === true,
     sort,
   });
   await doc.save();
@@ -349,11 +297,6 @@ export async function updateCollection(
     throw new ValidationError({ type: ["Invalid collection type"] });
   }
 
-  const displayResult = readDisplay(body);
-  if ("error" in displayResult)
-    throw new ValidationError({ display: [displayResult.error as string] });
-  const { display } = displayResult;
-  const { ctaText, ctaLink, ctaStyle } = readCta(body);
   const sort = readSort(body);
 
   let rules: any[] = [];
@@ -408,12 +351,7 @@ export async function updateCollection(
     items: type === "manual" ? items : [],
     recommendationType,
     recommendationLimit,
-    display,
-    ctaText,
-    ctaLink,
-    ctaStyle,
     order: Number(body.order) || 0,
-    showName: body.showName === true,
     sort,
   });
   await existing.save();

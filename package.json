@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch dev.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test:build": "node scripts/verify-build.mjs",

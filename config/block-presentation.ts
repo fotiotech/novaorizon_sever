@@ -83,8 +83,37 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
     "rounded",
     "shadow",
   ],
-  // Banners are art-directed in the banner editor; only common styles apply.
-  banner: [],
+  // Editorial carousels of collection/promotion/category tiles.
+  slides: [
+    "cardRatio",
+    "titlePosition",
+    "imagePosition",
+    "borderless",
+    "rounded",
+    "shadow",
+    "alignment",
+  ],
+  // Asymmetric "bento" grid: one hero tile plus supporting tiles.
+  bento: [
+    "titlePosition",
+    "imagePosition",
+    "borderless",
+    "rounded",
+    "shadow",
+    "alignment",
+  ],
+  // Column-flow layout, best for product cards.
+  masonry: [
+    "columns",
+    "cardRatio",
+    "titlePosition",
+    "borderless",
+    "rounded",
+    "shadow",
+    "alignment",
+  ],
+  // Compact rectangles with a centred logo and title (chips/tiles).
+  tiles: ["columns", "borderless", "rounded", "shadow"],
 };
 
 /** Fields that only make sense for a given source. */
@@ -95,7 +124,6 @@ export const SOURCE_FIELDS: Record<BlockSourceType, readonly string[]> = {
   collection: ["showItemCount", "countPosition"],
   promotion: ["badgeStyle", "showCode"],
   category: [],
-  banner: [],
 };
 
 /** Validators used when normalising a raw presentation payload. */

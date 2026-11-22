@@ -42,6 +42,8 @@ export const env = {
 
   /** Public frontend origin — used in emails, reset links, Meta catalog URLs. */
   frontendUrl: required("FRONTEND_URL", "http://localhost:3000"),
+  /** Shared secret for the storefront's on-demand revalidation endpoint. */
+  revalidateSecret: read("REVALIDATE_SECRET"),
 
   /* ----------------------------- Database ----------------------------- */
   mongodbUri: required("MONGODB_URI"),

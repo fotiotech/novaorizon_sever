@@ -9,6 +9,7 @@ export interface ICategoryProperty extends Document {
   // and deletes via the admin API; hidden from the admin property list.
   readOnly: boolean;
 
+
   mappings: {
     set: mongoose.Types.ObjectId;
     groups: {

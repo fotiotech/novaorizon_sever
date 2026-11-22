@@ -109,7 +109,6 @@ const WishlistItemSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "Product",
       required: true,
-      index: true,
     },
     variantId: { type: Schema.Types.ObjectId, default: null },
     sku: { type: String, trim: true, default: null },
