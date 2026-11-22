@@ -8,6 +8,7 @@ import {
 import {
   COLLECTION_TYPES,
   COLLECTION_MANUAL_LIMIT,
+  CTA_STYLES,
 } from "../config/collection-types.js";
 import { buildQueryFromRules } from "../utils/content-query.js";
 import { getEntityConfig, type RegistryKey } from "../utils/entity-registry.js";
@@ -79,6 +80,19 @@ function validateRecommendation(
 }
 
 
+
+function readCta(body: any) {
+  const raw = String(body?.ctaStyle ?? "none");
+  const ctaStyle = (CTA_STYLES as readonly string[]).includes(raw)
+    ? raw
+    : "none";
+  const ctaText = String(body?.ctaText ?? "").trim();
+  const ctaLink = String(body?.ctaLink ?? "").trim();
+  // A CTA without both parts is not a CTA.
+  return ctaStyle !== "none" && (!ctaText || !ctaLink)
+    ? { ctaStyle: "none" as const, ctaText: undefined, ctaLink: undefined }
+    : { ctaStyle, ctaText: ctaText || undefined, ctaLink: ctaLink || undefined };
+}
 
 function readSort(body: any) {
   const field = String(body?.sort?.field ?? "").trim();
@@ -161,6 +175,9 @@ export async function getResolvedCollections(
           status: c.status,
           order: c.order,
           sort: c.sort ?? null,
+          ctaText: c.ctaText ?? null,
+          ctaLink: c.ctaLink ?? null,
+          ctaStyle: c.ctaStyle ?? "none",
           recommendationType: c.recommendationType ?? null,
           recommendationLimit: c.recommendationLimit ?? null,
           created_at: c.created_at,
@@ -211,6 +228,7 @@ export async function createCollection(
     });
 
   const sort = readSort(body);
+  const cta = readCta(body);
 
   let rules: any[] = [];
   let items: string[] = [];
@@ -262,6 +280,7 @@ export async function createCollection(
     recommendationLimit,
     order: Number(body.order) || 0,
     sort,
+    ...cta,
   });
   await doc.save();
   res.status(201).json({ success: true, data: doc.toObject() });
@@ -340,6 +359,8 @@ export async function updateCollection(
       409,
     );
 
+  const cta = readCta(body);
+
   existing.set({
     name,
     description: String(body.description ?? "").trim(),
@@ -353,6 +374,7 @@ export async function updateCollection(
     recommendationLimit,
     order: Number(body.order) || 0,
     sort,
+    ...cta,
   });
   await existing.save();
   res.json({ success: true, data: existing.toObject() });

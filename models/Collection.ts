@@ -2,6 +2,7 @@ import mongoose, { Schema, Types, Model, HydratedDocument } from "mongoose";
 import {
   TARGET_TYPES,
   COLLECTION_TYPES,
+  CTA_STYLES,
   type TargetType,
 } from "../config/content.constants.js";
 
@@ -28,6 +29,9 @@ export interface ICollection {
   items: Types.ObjectId[];
   rules: ICollectionRule[];
   sort?: ICollectionSort | null;
+  ctaText?: string | null;
+  ctaLink?: string | null;
+  ctaStyle: (typeof CTA_STYLES)[number];
   status: "active" | "inactive";
   order: number;
   created_at?: Date;
@@ -85,6 +89,9 @@ const CollectionSchema = new Schema<ICollection, CollectionModel>(
     rules: { type: [RuleSchema], default: [] },
 
     sort: { type: SortSchema, default: undefined },
+    ctaText: { type: String, default: null },
+    ctaLink: { type: String, default: null },
+    ctaStyle: { type: String, enum: CTA_STYLES, default: "none" },
 
 
     status: { type: String, enum: ["active", "inactive"], default: "active" },

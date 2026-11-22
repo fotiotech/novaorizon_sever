@@ -6,7 +6,10 @@ import { env } from "../config/env.js";
  * The API cannot reach Next's cache directly, so it calls the storefront's
  * `POST /api/revalidate` endpoint with a shared secret.
  */
-export async function revalidateClientTag(tag: string): Promise<void> {
+export async function revalidateClientTags(tags: string[]): Promise<void> {
+  const unique = [...new Set(tags.filter(Boolean))];
+  if (unique.length === 0) return;
+
   const secret = env.revalidateSecret;
   const base = (env.frontendUrl ?? "")
     .split(",")[0]
@@ -22,15 +25,20 @@ export async function revalidateClientTag(tag: string): Promise<void> {
         "Content-Type": "application/json",
         "x-revalidate-secret": secret,
       },
-      body: JSON.stringify({ tag }),
+      body: JSON.stringify({ tags: unique }),
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) {
       console.error(
-        `[revalidate] ${tag} failed: ${res.status} ${await res.text().catch(() => "")}`,
+        `[revalidate] ${unique.join(",")} failed: ${res.status} ${await res.text().catch(() => "")}`,
       );
     }
   } catch (err) {
-    console.error(`[revalidate] ${tag} request failed:`, err);
+    console.error(`[revalidate] ${unique.join(",")} request failed:`, err);
   }
+}
+
+/** Convenience wrapper for a single tag. */
+export function revalidateClientTag(tag: string): Promise<void> {
+  return revalidateClientTags([tag]);
 }

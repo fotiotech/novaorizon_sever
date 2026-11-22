@@ -5,6 +5,7 @@ import { Collection } from "../models/Collection.js";
 import Category from "../models/Category.js";
 import Promotion from "../models/Promotion.js";
 import { connection } from "../config/db.js";
+import { revalidateClientTags } from "../utils/revalidate-client.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 import {
   BLOCK_LOCATIONS,
@@ -308,6 +309,7 @@ export async function createBlock(req: Request, res: Response): Promise<void> {
 
   const doc = new Block(parsed.doc);
   await doc.save();
+  void revalidateClientTags(["blocks"]);
   res.status(201).json({
     success: true,
     data: JSON.parse(JSON.stringify(serializeBlock(doc.toObject()))),
@@ -332,6 +334,7 @@ export async function updateBlock(req: Request, res: Response): Promise<void> {
     { new: true, runValidators: true },
   );
   if (!updated) throw new AppError("Block not found", 404);
+  void revalidateClientTags(["blocks"]);
   res.json({
     success: true,
     data: JSON.parse(JSON.stringify(serializeBlock(updated.toObject()))),
@@ -345,6 +348,7 @@ export async function deleteBlock(req: Request, res: Response): Promise<void> {
   await connection();
   const deleted = await Block.findByIdAndDelete(id);
   if (!deleted) throw new AppError("Block not found", 404);
+  void revalidateClientTags(["blocks"]);
   res.json({ success: true });
 }
 
@@ -375,5 +379,6 @@ export async function reorderBlocks(
       updateOne: { filter: { _id: id, location }, update: { order: i } },
     })),
   );
+  void revalidateClientTags(["blocks"]);
   res.json({ success: true });
 }
