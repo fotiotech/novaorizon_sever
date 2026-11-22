@@ -39,6 +39,7 @@ import { heroContentRouter } from "./hero-content.routes.js";
 import { campaignRouter } from "./campaign.routes.js";
 import { facebookAdsRouter } from "./facebook-ads.routes.js";
 import { blockRouter } from "./block.routes.js";
+import { tileRouter } from "./tiles.routes.js";
 import { collectionRouter } from "./collection.routes.js";
 import { monetbilRouter } from "./monetbil.routes.js";
 import { eventRouter } from "./event.routes.js";
@@ -95,6 +96,7 @@ apiRouter.use("/upload", uploadRouter); // ← new
 apiRouter.use("/analytics", analyticRouter); // ← new
 apiRouter.use("/hero-content", heroContentRouter); // ← new
 apiRouter.use("/blocks", blockRouter);
+apiRouter.use("/tiles", tileRouter);
 apiRouter.use("/campaigns", campaignRouter);
 apiRouter.use("/collections", collectionRouter);
 apiRouter.use("/facebook-ads", facebookAdsRouter);

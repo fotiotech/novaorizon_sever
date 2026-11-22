@@ -49,7 +49,6 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
     "cardShape",
     "cardRatio",
     "cardSize",
-    "cardStyle",
     "titlePosition",
     "imagePosition",
     "borderless",
@@ -61,7 +60,6 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
     "cardShape",
     "cardRatio",
     "cardSize",
-    "cardStyle",
     "titlePosition",
     "imagePosition",
     "borderless",
@@ -70,7 +68,6 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
     "alignment",
   ],
   list: [
-    "cardStyle",
     "titlePosition",
     "imagePosition",
     "borderless",
@@ -109,7 +106,6 @@ export const DISPLAY_FIELDS: Record<BlockDisplay, readonly string[]> = {
   masonry: [
     "columns",
     "cardRatio",
-    "cardStyle",
     "titlePosition",
     "borderless",
     "rounded",
