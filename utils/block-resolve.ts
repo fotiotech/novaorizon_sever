@@ -8,6 +8,8 @@ import {
 import { getEntityConfig } from "./entity-registry.js";
 import { buildProductQueryFromScope } from "./content-query.js";
 import Product from "../models/Product.js";
+import Offer from "../models/Offer.js";
+import { decorateItemsWithPromotions } from "./render-promotions.js";
 import {
   type BlockAnimation,
   type BlockAlignment,
@@ -150,8 +152,54 @@ async function resolvePromotionSource(
   if (!promo) return [];
 
   if (source.promotionMode === "self") {
-    const item = normalizeContentItem(promo, "Promotion");
+    const item: any = normalizeContentItem(promo, "Promotion");
     if (!item.image) item.image = promo.imageUrl ?? null;
+
+    const offer: any = promo.offerId
+      ? await Offer.findById(promo.offerId).lean()
+      : null;
+    const type = offer?.type ?? promo.promotionType?.calculationType;
+    const value =
+      offer?.discountValue ?? promo.propertyValues?.percentage ?? null;
+    const label =
+      type === "percentage"
+        ? `${value ?? 0}% off`
+        : type === "fixed"
+          ? `${value ?? 0} off`
+          : type === "bogo"
+            ? `Buy ${offer?.buyQuantity ?? 1} get ${offer?.getQuantity ?? 1}`
+            : type === "free_shipping"
+              ? "Free shipping"
+              : type === "bundle"
+                ? "Bundle discount"
+                : null;
+
+    item.badge = offer?.name ?? promo.name ?? null;
+    item.subline = label;
+    item.promotions = [
+      {
+        _id: String(promo._id),
+        name: promo.name,
+        label: offer?.name ?? promo.name,
+        description: promo.description ?? offer?.description ?? null,
+        code: promo.code ?? null,
+        calculationType: type ?? "percentage",
+        discount: value ?? null,
+        offerId: promo.offerId ? String(promo.offerId) : null,
+        startDate: promo.startDate ? new Date(promo.startDate).toISOString() : "",
+        endDate: promo.endDate ? new Date(promo.endDate).toISOString() : "",
+        offer: offer
+          ? {
+              name: offer.name,
+              type: offer.type,
+              discountValue: offer.discountValue ?? null,
+              buyQuantity: offer.buyQuantity ?? null,
+              getQuantity: offer.getQuantity ?? null,
+              bundleQuantity: offer.bundleQuantity ?? null,
+            }
+          : null,
+      },
+    ];
     return [item];
   }
 
@@ -230,6 +278,13 @@ export async function resolveBlock(
     default:
       return null;
   }
+
+  items = await decorateItemsWithPromotions(items, {
+    showBadge: source.type === "promotion",
+  }).catch((err) => {
+    console.error("[promotions] block decoration failed", err);
+    return items;
+  });
 
   return { block: blockMeta, items };
 }

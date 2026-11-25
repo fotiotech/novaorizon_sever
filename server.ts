@@ -1,5 +1,10 @@
-import app from "./app.js";
-import { env } from "./config/env.js";
+import { loadSecretsIntoEnv } from "./config/secrets.js";
+
+// Secrets must be merged before app/env modules read process.env.
+await loadSecretsIntoEnv();
+
+const { default: app } = await import("./app.js");
+const { env } = await import("./config/env.js");
 
 /**
  * Production entrypoint.

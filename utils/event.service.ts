@@ -160,6 +160,27 @@ export async function trackEvent(
     timestamp: event.timestamp,
   });
 
+  // Keep the product's merchandising counters warm so rule collections and
+  // recommendations can query them without scanning events.
+  const statField: Record<string, string | undefined> = {
+    view: "views",
+    cart_add: "cartAdds",
+    purchase: "purchases",
+    like: "likes",
+  };
+  const field = statField[eventType];
+  if (itemId && field) {
+    const inc: Record<string, number> = { [`stats.${field}`]: 1 };
+    if (eventType === "purchase" && metadata?.total) {
+      const total = Number(metadata.total);
+      if (Number.isFinite(total)) inc["stats.revenue"] = total;
+    }
+    void Product.updateOne(
+      { _id: itemId },
+      { $inc: inc, $set: { "stats.lastEventAt": event.timestamp } },
+    ).catch((err) => console.error("[events] product stats update failed", err));
+  }
+
   return { ok: true, id: String(event._id) };
 }
 

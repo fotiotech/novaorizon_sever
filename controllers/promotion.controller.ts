@@ -1,14 +1,18 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Promotion from "../models/Promotion.js";
+import Offer from "../models/Offer.js";
 import PromotionUsage from "../models/PromotionUsage.js";
 import CustomerGroup from "../models/CustomerGroup.js";
 import Product from "../models/Product.js";
 import Category from "../models/Category.js";
 import Brand from "../models/Brand.js";
+import Collection from "../models/Collection.js";
 import { connection } from "../config/db.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 import { CALC_FIELDS } from "../config/calc-fields.js";
+import { invalidateRenderPromotionCache } from "../utils/render-promotions.js";
+import { revalidateClientTags } from "../utils/revalidate-client.js";
 
 function param(req: Request, key: string): string {
   const raw = req.params[key];
@@ -33,15 +37,91 @@ function buildPropertySnapshot(calculationType: string) {
   }));
 }
 
+const RULE_OPERATORS = new Set([
+  "$eq",
+  "$ne",
+  "$gt",
+  "$gte",
+  "$lt",
+  "$lte",
+  "$in",
+  "$nin",
+  "$contains",
+  "$exists",
+]);
+
+function normalizeRules(raw: any): { field: string; operator: string; value: any }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((rule: any) => ({
+      field: String(rule?.field ?? "").trim(),
+      operator: String(rule?.operator ?? "$eq"),
+      value: rule?.value ?? null,
+    }))
+    .filter(
+      (rule) => !!rule.field && RULE_OPERATORS.has(rule.operator),
+    );
+}
+
 function normalizeScope(scope: any) {
-  const appliesTo = scope?.appliesTo ?? "all";
+  const raw = String(scope?.appliesTo ?? "all");
+  const appliesTo = (["all", "products", "categories", "brands", "rules"].includes(
+    raw,
+  )
+    ? raw
+    : "all") as "all" | "products" | "categories" | "brands" | "rules";
   return {
     appliesTo,
+    match: (scope?.match === "any" ? "any" : "all") as "all" | "any",
+    rules: appliesTo === "rules" ? normalizeRules(scope?.rules) : [],
     productIds: appliesTo === "products" ? (scope?.productIds ?? []) : [],
     categoryIds: appliesTo === "categories" ? (scope?.categoryIds ?? []) : [],
     brandIds: appliesTo === "brands" ? (scope?.brandIds ?? []) : [],
     excludeProductIds: scope?.excludeProductIds ?? [],
   };
+}
+
+/* ------------------------- rule preview -------------------------------- */
+
+export async function previewPromotionRules(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  await connection();
+  const body = req.body ?? {};
+  const rules = normalizeRules(body.rules);
+  const match = body.match === "any" ? "any" : "all";
+
+  let offer: any = null;
+  if (body.offerId && isValidId(String(body.offerId))) {
+    offer = await Offer.findById(String(body.offerId)).lean();
+  }
+
+  const limit = 2000;
+  const products: any[] = await Product.find({ status: "active" })
+    // Rules may reference dynamic category attributes, so keep the document
+    // intact (only drop the heavy embedding vectors).
+    .select("-embedding -embeddingText -embeddingModel")
+    .limit(limit)
+    .lean();
+
+  const { matchesPromotionRules } = await import("../utils/promotion-rules.js");
+  const matched = products.filter((product) =>
+    matchesPromotionRules(product, rules, match, { offer }),
+  );
+
+  res.json({
+    data: {
+      count: matched.length,
+      truncated: products.length >= limit,
+      sample: matched.slice(0, 8).map((product) => ({
+        _id: String(product._id),
+        name: product.name,
+        price: product.price,
+        image: Array.isArray(product.images) ? product.images[0] : undefined,
+      })),
+    },
+  });
 }
 
 /* -------------------------- composer options ---------------------------- */
@@ -52,8 +132,15 @@ export async function getPromotionOptions(
 ): Promise<void> {
   await connection();
 
-  const [customerGroups, promotions, products, categories, brands] =
-    await Promise.all([
+  const [
+    customerGroups,
+    promotions,
+    products,
+    categories,
+    brands,
+    offers,
+    collections,
+  ] = await Promise.all([
       CustomerGroup.find().lean(),
       Promotion.find().select("name _id").sort({ createdAt: -1 }).lean(),
       Product.find()
@@ -62,6 +149,11 @@ export async function getPromotionOptions(
         .lean(),
       Category.find().select("name _id slug").sort({ name: 1 }).lean(),
       Brand.find().select("name _id url_slug").sort({ name: 1 }).lean(),
+      Offer.find({ isActive: true })
+        .select("name type discountValue conditions.endDate")
+        .sort({ createdAt: -1 })
+        .lean(),
+      Collection.find().select("name _id").sort({ name: 1 }).lean(),
     ]);
 
   res.json({
@@ -92,8 +184,78 @@ export async function getPromotionOptions(
         label: b.name,
         sublabel: b.url_slug ?? undefined,
       })),
+      offers: offers.map((o: any) => ({
+        value: o._id.toString(),
+        label: o.name,
+        sublabel: o.type,
+      })),
+      collections: collections.map((c: any) => ({
+        value: c._id.toString(),
+        label: c.name,
+      })),
     },
   });
+}
+
+function offerToPromotionType(offer: any): {
+  name: string;
+  code?: string;
+  description?: string | null;
+  calculationType: any;
+  properties: any[];
+  isActive: boolean;
+} {
+  const map: Record<string, string> = {
+    percentage: "percentage",
+    fixed: "fixed_amount",
+    bogo: "buy_x_get_y",
+    free_shipping: "free_shipping",
+    bundle: "bundle_discount",
+  };
+  const calculationType = map[offer.type] ?? "percentage";
+  return {
+    name: offer.name,
+    code: offer.type,
+    description: offer.description ?? null,
+    calculationType,
+    properties: buildPropertySnapshot(calculationType),
+    isActive: offer.isActive !== false,
+  };
+}
+
+function offerPropertyValues(offer: any): Record<string, any> {
+  switch (offer.type) {
+    case "percentage":
+      return { percentage: Number(offer.discountValue) || 0 };
+    case "fixed":
+      return { amount: Number(offer.discountValue) || 0 };
+    case "bogo":
+      return {
+        buyQuantity: Number(offer.buyQuantity) || 1,
+        getQuantity: Number(offer.getQuantity) || 1,
+      };
+    case "bundle":
+      return {
+        discountAmount: Number(offer.discountValue) || 0,
+        bundleQuantity: Number(offer.bundleQuantity) || 1,
+        productIds: (offer.conditions?.eligibleProducts ?? []).map(String),
+      };
+    default:
+      return {};
+  }
+}
+
+async function loadOfferType(offerId: string) {
+  if (!isValidId(offerId)) {
+    throw new ValidationError({ offerId: ["Invalid offer ID"] });
+  }
+  const offer = await Offer.findById(offerId).lean();
+  if (!offer) throw new ValidationError({ offerId: ["Offer not found"] });
+  return {
+    offer,
+    promotionType: offerToPromotionType(offer),
+    propertyValues: offerPropertyValues(offer),
+  };
 }
 
 /* -------------------------------- CRUD ---------------------------------- */
@@ -105,20 +267,14 @@ export async function createPromotion(
   await connection();
   const data = req.body ?? {};
 
-  if (!data.calculationType) {
-    throw new ValidationError({
-      calculationType: ["Calculation type is required"],
-    });
+  if (!data.offerId) {
+    throw new ValidationError({ offerId: ["Select an offer"] });
   }
 
-  const promotionType = {
-    name: data.name,
-    code: data.code || undefined,
-    description: data.description,
-    calculationType: data.calculationType,
-    properties: buildPropertySnapshot(data.calculationType),
-    isActive: true,
-  };
+  const loaded = await loadOfferType(String(data.offerId));
+  const offerId = String(data.offerId);
+  const promotionType = loaded.promotionType;
+  const offerValues = loaded.propertyValues;
 
   const payload = {
     name: data.name,
@@ -129,12 +285,15 @@ export async function createPromotion(
     endDate: new Date(data.endDate),
     isActive: data.isActive ?? true,
     priority: data.priority ?? 0,
+    offerId,
     promotionType,
-    scope: normalizeScope(data.scope),
+    scope: normalizeScope(data.scope) as any,
     propertyValues: new Map(
-      Object.entries(data.propertyValues ?? {}).filter(
-        ([, v]) => v !== undefined && v !== null && v !== "",
-      ),
+      Object.entries(
+        Object.keys(data.propertyValues ?? {}).length > 0
+          ? data.propertyValues
+          : offerValues,
+      ).filter(([, v]) => v !== undefined && v !== null && v !== ""),
     ),
     customerEligibility: {
       allCustomers: data.customerEligibility?.allCustomers ?? true,
@@ -152,6 +311,8 @@ export async function createPromotion(
 
   try {
     const promotion = await Promotion.create(payload);
+    invalidateRenderPromotionCache();
+    void revalidateClientTags(["blocks", "promotions"]);
     res.status(201).json({ success: true, data: promotion.toObject() });
   } catch (err: any) {
     if (err.code === 11000) {
@@ -174,13 +335,23 @@ export async function updatePromotion(
   const existing: any = await Promotion.findById(id).lean();
   if (!existing) throw new AppError("Promotion not found", 404);
 
+  let offerPromotionType: any = null;
+  let offerValues: Record<string, any> = {};
+  if (data.offerId) {
+    const loaded = await loadOfferType(String(data.offerId));
+    offerPromotionType = loaded.promotionType;
+    offerValues = loaded.propertyValues;
+  }
+
   const calculationType =
     data.calculationType ?? existing.promotionType?.calculationType;
   const typeChanged =
     data.calculationType &&
     data.calculationType !== existing.promotionType?.calculationType;
 
-  const promotionType = typeChanged
+  const promotionType = offerPromotionType
+    ? offerPromotionType
+    : typeChanged
     ? {
         name: data.name ?? existing.name,
         code: data.code ?? existing.code,
@@ -195,6 +366,17 @@ export async function updatePromotion(
       };
 
   const update: any = {
+    ...(data.offerId
+      ? {
+          propertyValues: new Map(
+            Object.entries(offerValues).filter(
+              ([, v]) => v !== undefined && v !== null && v !== "",
+            ),
+          ),
+        }
+      : {}),
+    offerId:
+      data.offerId !== undefined ? data.offerId || null : existing.offerId ?? null,
     name: data.name ?? existing.name,
     description: data.description ?? existing.description,
     startDate: data.startDate ? new Date(data.startDate) : existing.startDate,
@@ -228,6 +410,8 @@ export async function updatePromotion(
       { new: true, runValidators: true },
     ).lean();
     if (!updated) throw new AppError("Promotion not found", 404);
+    invalidateRenderPromotionCache();
+    void revalidateClientTags(["blocks", "promotions"]);
     res.json({ success: true, data: updated });
   } catch (err: any) {
     if (err.code === 11000) {
@@ -256,6 +440,8 @@ export async function deletePromotion(
 
   const result = await Promotion.findByIdAndDelete(id).lean();
   if (!result) throw new AppError("Promotion not found", 404);
+  invalidateRenderPromotionCache();
+  void revalidateClientTags(["blocks", "promotions"]);
   res.json({ success: true });
 }
 

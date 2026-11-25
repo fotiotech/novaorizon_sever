@@ -9,6 +9,10 @@ let _client: Pusher | null | undefined = undefined;
  * functional without Pusher configured (events are written; realtime
  * pushes silently no-op).
  */
+export function resetPusher(): void {
+  _client = undefined;
+}
+
 export function getPusher(): Pusher | null {
   if (_client !== undefined) return _client;
 

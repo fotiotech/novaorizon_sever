@@ -3,6 +3,10 @@
 
 import { connection } from "../config/db.js";
 import Promotion from "../models/Promotion.js";
+import Product from "../models/Product.js";
+import Offer from "../models/Offer.js";
+import { promotionMatchesProduct } from "./promotion-rules.js";
+import { attachOfferCollectionMembership } from "./offer-membership.js";
 import PromotionUsage from "../models/PromotionUsage.js";
 import mongoose from "mongoose";
 
@@ -175,7 +179,12 @@ function itemInScope(item: CartItem, scope: any): boolean {
 /** Narrow the cart to just the items this promotion can discount.
  *  Returns the original cart when scope is "all" so the common path
  *  allocates nothing. */
-function buildScopedCart(cart: Cart, promotion: any): Cart {
+function buildScopedCart(
+  cart: Cart,
+  promotion: any,
+  products?: Map<string, any>,
+  offer?: any,
+): Cart {
   const scope = promotion?.scope;
   if (!scope || !scope.appliesTo || scope.appliesTo === "all") return cart;
 
@@ -183,6 +192,10 @@ function buildScopedCart(cart: Cart, promotion: any): Cart {
 
   const items = cart.items.filter((i) => {
     if (excluded.has(String(i.productId))) return false;
+    if (scope.appliesTo === "rules") {
+      const product = products?.get(String(i.productId));
+      return !!product && promotionMatchesProduct(product, promotion, offer);
+    }
     return itemInScope(i, scope);
   });
 
@@ -376,15 +389,19 @@ function calculateDiscount(
   }
 }
 
-function labelFor(promotion: any): string {
+function labelFor(promotion: any, offer?: any): string {
   const calcType = promotion?.promotionType?.calculationType;
   switch (calcType) {
     case "percentage": {
-      const pct = Number(prop(promotion, "percentage", 0));
+      const pct = Number(
+        offer?.discountValue ?? prop(promotion, "percentage", 0),
+      );
       return `${pct}% off`;
     }
     case "fixed_amount": {
-      const amt = Number(prop(promotion, "amount", 0));
+      const amt = Number(
+        offer?.discountValue ?? prop(promotion, "amount", 0),
+      );
       return `${amt} off`;
     }
     case "buy_x_get_y": {
@@ -504,6 +521,42 @@ function resolveConflicts(candidates: ApplicablePromotion[]): {
 // Public actions
 // ─────────────────────────────────────────────────────────────────────
 
+async function hydrateScopeDocs(
+  cart: Cart,
+  promotions: any[],
+): Promise<{ products: Map<string, any>; offers: Map<string, any> }> {
+  const products = new Map<string, any>();
+  const offers = new Map<string, any>();
+
+  const rulesMode = promotions.some(
+    (p) => p.scope?.appliesTo === "rules",
+  );
+  if (rulesMode) {
+    const ids = [...new Set(cart.items.map((i) => String(i.productId)))].filter(
+      (id) => isValidObjectId(id),
+    );
+    if (ids.length > 0) {
+      const docs: any[] = await Product.find({ _id: { $in: ids } }).lean();
+      for (const doc of docs) products.set(String(doc._id), doc);
+    }
+  }
+
+  const offerIds = [
+    ...new Set(
+      promotions
+        .map((p) => (p.offerId ? String(p.offerId) : null))
+        .filter(Boolean) as string[],
+    ),
+  ].filter((id) => isValidObjectId(id));
+  if (offerIds.length > 0) {
+    const docs: any[] = await Offer.find({ _id: { $in: offerIds } }).lean();
+    await attachOfferCollectionMembership(docs);
+    for (const doc of docs) offers.set(String(doc._id), doc);
+  }
+
+  return { products, offers };
+}
+
 export async function getApplicablePromotions(
   cart: Cart,
   ctx: CustomerContext = {},
@@ -526,6 +579,10 @@ export async function getApplicablePromotions(
   };
 
   const promotions = await Promotion.find(query).lean();
+  const { products, offers } = await hydrateScopeDocs(
+    cart,
+    promotions as any[],
+  );
 
   const candidates: ApplicablePromotion[] = [];
   const eligibleIds: string[] = [];
@@ -540,7 +597,8 @@ export async function getApplicablePromotions(
 
     // Then narrow to the items this promotion can actually discount.
     // A non-"all" scope that matches nothing gates the promotion out.
-    const scopedCart = buildScopedCart(cart, p);
+    const offer = p.offerId ? offers.get(String(p.offerId)) : undefined;
+    const scopedCart = buildScopedCart(cart, p, products, offer);
     if (scopedCart.items.length === 0) continue;
 
     const scopeCtx = buildScopeContext(cart, scopedCart);
@@ -555,9 +613,10 @@ export async function getApplicablePromotions(
       icon: p.promotionType?.icon ?? null,
       priority: p.priority ?? 0,
       stackable: !!p.stackable,
-      calculationType: p.promotionType?.calculationType,
+      calculationType:
+        offer?.type ?? p.promotionType?.calculationType,
       discount,
-      label: labelFor(p),
+      label: labelFor(p, offer),
       requiresCode: !!p.code,
     });
     eligibleIds.push(p._id.toString());
@@ -639,9 +698,13 @@ export async function validatePromotionCode(
     };
   }
 
-  // Scope gate — a code for a product/category/brand-scoped promotion
-  // can't be applied to a cart that doesn't contain any matching item.
-  const scopedCart = buildScopedCart(cart, promotion);
+  // Scope gate — a code for a scoped promotion can't be applied to a cart
+  // that doesn't contain any matching item (rules need product docs).
+  const { products, offers } = await hydrateScopeDocs(cart, [promotion]);
+  const offer = promotion.offerId
+    ? offers.get(String(promotion.offerId))
+    : undefined;
+  const scopedCart = buildScopedCart(cart, promotion, products, offer);
   if (scopedCart.items.length === 0) {
     return { ok: false, reason: scopeMismatchReason(promotion) };
   }
@@ -670,9 +733,10 @@ export async function validatePromotionCode(
       icon: promotion.promotionType?.icon ?? null,
       priority: promotion.priority ?? 0,
       stackable: !!promotion.stackable,
-      calculationType: promotion.promotionType?.calculationType,
+      calculationType:
+        offer?.type ?? promotion.promotionType?.calculationType,
       discount,
-      label: labelFor(promotion),
+      label: labelFor(promotion, offer),
       requiresCode: true,
     },
   };

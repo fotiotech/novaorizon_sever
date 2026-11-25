@@ -5,6 +5,11 @@ import Brand from "../models/Brand.js";
 import Carrier from "../models/Carrier.js";
 import { Block } from "../models/Block.js";
 import { resolveBlock } from "../utils/block-resolve.js";
+import {
+  resolveRenderPricing,
+  resolveRenderPromotions,
+  resolveRenderPromotionsForProducts,
+} from "../utils/render-promotions.js";
 import { BLOCK_LOCATIONS } from "../config/content.constants.js";
 import "../models/Brand.js";
 import "../models/Category.js";
@@ -78,6 +83,20 @@ export async function listPublicProducts(
     Product.countDocuments(filter),
   ]);
 
+  // Decorate the page with promotion summaries/prices once (batch).
+  const fullDocs: any[] = await Product.find({
+    _id: { $in: products.map((product: any) => product._id) },
+  })
+    .select("-embedding -embeddingText -embeddingModel")
+    .lean();
+  const promoMap = await resolveRenderPromotionsForProducts(fullDocs);
+  for (const product of products as any[]) {
+    const promotions = promoMap.get(String(product._id)) ?? [];
+    product.promotions = promotions;
+    product.pricing = resolveRenderPricing(product, promotions);
+    if (promotions.length > 0) product.badge = promotions[0].label;
+  }
+
   res.json({
     data: {
       products: JSON.parse(JSON.stringify(products)),
@@ -120,6 +139,14 @@ export async function getPublicProduct(
     plain.category = plain.categoryId;
   }
 
+  plain.renderPromotions = await resolveRenderPromotions(product).catch(
+    (err) => {
+      console.error("[promotions] render resolution failed", err);
+      return [];
+    },
+  );
+  plain.pricing = resolveRenderPricing(product, plain.renderPromotions);
+
   res.json({ data: plain });
 }
 
@@ -157,6 +184,19 @@ export async function listRelatedProducts(
     .select(LIST_FIELDS)
     .limit(limit)
     .lean();
+
+  const fullDocs: any[] = await Product.find({
+    _id: { $in: related.map((product: any) => product._id) },
+  })
+    .select("-embedding -embeddingText -embeddingModel")
+    .lean();
+  const promoMap = await resolveRenderPromotionsForProducts(fullDocs);
+  for (const product of related as any[]) {
+    const promotions = promoMap.get(String(product._id)) ?? [];
+    product.promotions = promotions;
+    product.pricing = resolveRenderPricing(product, promotions);
+    if (promotions.length > 0) product.badge = promotions[0].label;
+  }
 
   res.json({ data: JSON.parse(JSON.stringify(related)) });
 }
@@ -228,7 +268,8 @@ export async function listResolvedBlocks(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const location = String(req.query.location ?? "");
+  const requestedLocation = String(req.query.location ?? "");
+  const location = requestedLocation === "ProductRelated" ? "pdp" : requestedLocation;
   if (!BLOCK_LOCATIONS.includes(location as any)) {
     throw new ValidationError({ location: ["Invalid block location"] });
   }
@@ -236,7 +277,12 @@ export async function listResolvedBlocks(
   await connection();
 
   const docs = await Block.find({
-    location: location as "Home" | "ProductRelated",
+    location: {
+      $in:
+        location === "pdp"
+          ? ["pdp", "ProductRelated"]
+          : [location],
+    } as any,
     status: "active",
   })
     .sort({ order: 1, created_at: -1 })

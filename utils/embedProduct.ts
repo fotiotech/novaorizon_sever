@@ -9,6 +9,10 @@ import {
 
 let _client: VoyageAIClient | null = null;
 
+export function resetVoyageClient(): void {
+  _client = null;
+}
+
 function getClient(): VoyageAIClient {
   if (!_client) {
     _client = new VoyageAIClient({

@@ -49,8 +49,29 @@ export interface IPromotionType {
   icon?: string | null;
 }
 
+export type PromotionRuleOperator =
+  | "$eq"
+  | "$ne"
+  | "$gt"
+  | "$gte"
+  | "$lt"
+  | "$lte"
+  | "$in"
+  | "$nin"
+  | "$contains"
+  | "$exists";
+
+export interface IPromotionRule {
+  field: string;
+  operator: PromotionRuleOperator;
+  value: any;
+}
+
 export interface IPromotionScope {
-  appliesTo: "all" | "products" | "categories" | "brands";
+  appliesTo: "all" | "products" | "categories" | "brands" | "rules";
+  /** AND / OR across rules. */
+  match: "all" | "any";
+  rules: IPromotionRule[];
   productIds: Types.ObjectId[];
   categoryIds: Types.ObjectId[];
   brandIds: Types.ObjectId[];
@@ -58,6 +79,8 @@ export interface IPromotionScope {
 }
 
 export interface IPromotion {
+  /** Reusable offer this promotion is built from (optional). */
+  offerId?: Types.ObjectId | null;
   promotionType: IPromotionType;
   scope: IPromotionScope;
   propertyValues: Map<string, any>;
@@ -156,9 +179,32 @@ const PromotionScopeSchema = new Schema(
   {
     appliesTo: {
       type: String,
-      enum: ["all", "products", "categories", "brands"],
+      enum: ["all", "products", "categories", "brands", "rules"],
       default: "all",
     },
+    match: { type: String, enum: ["all", "any"], default: "all" },
+    rules: [
+      {
+        field: { type: String, required: true, trim: true },
+        operator: {
+          type: String,
+          enum: [
+            "$eq",
+            "$ne",
+            "$gt",
+            "$gte",
+            "$lt",
+            "$lte",
+            "$in",
+            "$nin",
+            "$contains",
+            "$exists",
+          ],
+          required: true,
+        },
+        value: { type: Schema.Types.Mixed, default: null },
+      },
+    ],
     productIds: [{ type: Schema.Types.ObjectId, ref: "Product" }],
     categoryIds: [{ type: Schema.Types.ObjectId, ref: "Category" }],
     brandIds: [{ type: Schema.Types.ObjectId, ref: "Brand" }],
@@ -169,6 +215,7 @@ const PromotionScopeSchema = new Schema(
 
 const PromotionSchema = new Schema<IPromotion, PromotionModel>(
   {
+    offerId: { type: Schema.Types.ObjectId, ref: "Offer", default: null },
     promotionType: { type: PromotionTypeSchema, required: true },
     scope: { type: PromotionScopeSchema, default: () => ({}) },
     propertyValues: { type: Map, of: Schema.Types.Mixed, default: {} },
@@ -206,6 +253,7 @@ const PromotionSchema = new Schema<IPromotion, PromotionModel>(
 );
 
 PromotionSchema.index({ isActive: 1, startDate: 1, endDate: 1 });
+PromotionSchema.index({ offerId: 1 });
 PromotionSchema.index({ "promotionType.calculationType": 1 });
 PromotionSchema.index({ "scope.appliesTo": 1, "scope.productIds": 1 });
 PromotionSchema.index({ "scope.appliesTo": 1, "scope.categoryIds": 1 });

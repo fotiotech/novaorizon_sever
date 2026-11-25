@@ -6,6 +6,11 @@ import Product from "../models/Product.js";
 import "../models/Brand.js";
 import Category from "../models/Category.js";
 import { connection } from "../config/db.js";
+import { syncProductOffers } from "../utils/offer-sync.js";
+import {
+  resolveRenderPricing,
+  resolveRenderPromotions,
+} from "../utils/render-promotions.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 import { safeValidateProductCreateOrUpdate } from "../schemas/product.schema.js";
 import {
@@ -552,7 +557,17 @@ export async function findProductById(
   await connection();
   const product = await Product.findById(id).lean();
   if (!product) throw new AppError("Product not found", 404);
-  res.json({ data: serialize(product) });
+  const renderPromotions = await resolveRenderPromotions(product).catch((err) => {
+    console.error("[promotions] render resolution failed", err);
+    return [];
+  });
+  res.json({
+    data: {
+      ...serialize(product),
+      renderPromotions,
+      pricing: resolveRenderPricing(product, renderPromotions),
+    },
+  });
 }
 
 export async function findProducts(req: Request, res: Response): Promise<void> {
@@ -800,6 +815,12 @@ export async function createProduct(
   if (!product)
     throw new AppError("Failed to create product (no document returned)", 500);
 
+  if (Array.isArray(req.body?.offerIds)) {
+    await syncProductOffers(product._id, req.body.offerIds).catch((err) =>
+      console.error("[offers] product offer sync failed", err),
+    );
+  }
+
   res.status(201).json({
     success: true,
     data: {
@@ -842,6 +863,12 @@ export async function updateProduct(
     { new: true, runValidators: true },
   );
   if (!product) throw new AppError("Product not found", 404);
+
+  if (Array.isArray(req.body?.offerIds)) {
+    await syncProductOffers(product._id, req.body.offerIds).catch((err) =>
+      console.error("[offers] product offer sync failed", err),
+    );
+  }
 
   res.json({ success: true, data: serialize(product) });
 }

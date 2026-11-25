@@ -7,6 +7,19 @@ export type OfferType =
   | "free_shipping"
   | "bundle";
 
+export interface IOfferEligibility {
+  productIds: Types.ObjectId[];
+  categoryIds: Types.ObjectId[];
+  brandIds: Types.ObjectId[];
+  collectionIds: Types.ObjectId[];
+  match: "all" | "any";
+  rules: {
+    field: string;
+    operator: string;
+    value: any;
+  }[];
+}
+
 export interface IOfferConditions {
   minPurchaseAmount?: number;
   eligibleProducts: Types.ObjectId[];
@@ -19,7 +32,14 @@ export interface IOffer {
   description?: string | null;
   type: OfferType;
   discountValue?: number | null;
+  /** BXGY configuration. */
+  buyQuantity?: number | null;
+  getQuantity?: number | null;
+  /** Bundle configuration. */
+  bundleQuantity?: number | null;
   conditions: IOfferConditions;
+  /** Manual/ruled target set; replaces conditions.eligibleProducts over time. */
+  eligibility?: IOfferEligibility;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -38,6 +58,23 @@ const OfferSchema = new Schema<IOffer, OfferModel>(
       required: true,
     },
     discountValue: { type: Number, default: null },
+    buyQuantity: { type: Number, default: null, min: 1 },
+    getQuantity: { type: Number, default: null, min: 1 },
+    bundleQuantity: { type: Number, default: null, min: 1 },
+    eligibility: {
+      productIds: [{ type: Schema.Types.ObjectId, ref: "Product" }],
+      categoryIds: [{ type: Schema.Types.ObjectId, ref: "Category" }],
+      brandIds: [{ type: Schema.Types.ObjectId, ref: "Brand" }],
+      collectionIds: [{ type: Schema.Types.ObjectId, ref: "Collection" }],
+      match: { type: String, enum: ["all", "any"], default: "all" },
+      rules: [
+        {
+          field: { type: String, trim: true },
+          operator: { type: String, default: "$eq" },
+          value: { type: Schema.Types.Mixed, default: null },
+        },
+      ],
+    },
     conditions: {
       minPurchaseAmount: { type: Number, default: null },
       eligibleProducts: [{ type: Schema.Types.ObjectId, ref: "Product" }],

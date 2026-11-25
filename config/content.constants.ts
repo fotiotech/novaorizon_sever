@@ -32,7 +32,7 @@ export type {
 /*                               Block locations                              */
 /* -------------------------------------------------------------------------- */
 
-export const BLOCK_LOCATIONS = ["Home", "ProductRelated"] as const;
+export const BLOCK_LOCATIONS = ["Home", "pdp"] as const;
 export type BlockLocation = (typeof BLOCK_LOCATIONS)[number];
 
 export const BLOCK_SOURCE_TYPES = [

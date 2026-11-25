@@ -3,6 +3,10 @@ import { env } from "../config/env.js";
 
 let _s3Client: S3Client | null = null;
 
+export function resetS3Client(): void {
+  _s3Client = null;
+}
+
 function getS3Client(): S3Client {
   if (!_s3Client) {
     _s3Client = new S3Client({

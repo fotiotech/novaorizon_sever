@@ -16,6 +16,7 @@ import { getRecommendationResolver } from "../utils/recommendation-resolvers.js"
 import { deleteS3Object } from "../utils/s3.js";
 import { connection } from "../config/db.js";
 import { normalizeContentItem } from "../utils/content-resolve.js";
+import { decorateItemsWithPromotions } from "../utils/render-promotions.js";
 import { AppError, ValidationError } from "../middleware/error.middleware.js";
 
 function param(req: Request, key: string): string {
@@ -184,8 +185,10 @@ export async function getResolvedCollections(
           created_at: c.created_at,
           updated_at: c.updated_at,
         },
-        items: items.map((item: any) =>
-          normalizeContentItem(item, c.targetType as any),
+        items: await decorateItemsWithPromotions(
+          items.map((item: any) =>
+            normalizeContentItem(item, c.targetType as any),
+          ),
         ),
         itemCount: items.length,
         isDynamic: c.type === "recommendation",

@@ -1,81 +1,38 @@
 import {
-  SecretsManagerClient,
-  GetSecretValueCommand,
-  PutSecretValueCommand,
-  CreateSecretCommand,
-  ResourceNotFoundException,
-} from "@aws-sdk/client-secrets-manager";
+  readRawSecret,
+  writeRawSecret,
+} from "../config/secrets.js";
 
-const region =
-  process.env.FACEBOOK_ADS_AWS_REGION || process.env.AWS_REGION || "us-east-1";
-const SECRET_NAME =
-  process.env.FACEBOOK_ADS_SECRET_NAME || "novaorizon/facebook-ads";
+/**
+ * Facebook Ads settings are stored inside the central app secret under
+ * `facebookAds`, next to the environment keys. One AWS identity/secret is used
+ * for S3, the app and the Meta integration.
+ */
+const SECRET_KEY = "facebookAds";
 
-const explicitCredentials =
-  process.env.FACEBOOK_ADS_AWS_ACCESS_KEY_ID &&
-  process.env.FACEBOOK_ADS_AWS_SECRET_ACCESS_KEY
-    ? {
-        accessKeyId: process.env.FACEBOOK_ADS_AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.FACEBOOK_ADS_AWS_SECRET_ACCESS_KEY,
-      }
-    : undefined;
-
-let client: SecretsManagerClient | null = null;
-function getClient(): SecretsManagerClient {
-  if (!client) {
-    client = new SecretsManagerClient({
-      region,
-      credentials: explicitCredentials,
-    });
-  }
-  return client;
-}
-
-type SecretRecord = Record<string, unknown>;
-
-let cache: { value: SecretRecord | null; expiresAt: number } = {
+const TTL_MS = 60_000;
+let cache: { value: Record<string, unknown> | null; expiresAt: number } = {
   value: null,
   expiresAt: 0,
 };
-const TTL_MS = 60_000;
 
 export function invalidateSecretCache(): void {
   cache = { value: null, expiresAt: 0 };
 }
 
-export async function getSecret(): Promise<SecretRecord | null> {
+export async function getSecret(): Promise<Record<string, unknown> | null> {
   if (cache.value !== null && Date.now() < cache.expiresAt) return cache.value;
-  try {
-    const res = await getClient().send(
-      new GetSecretValueCommand({ SecretId: SECRET_NAME }),
-    );
-    const raw = res.SecretString ?? "";
-    const parsed: SecretRecord = raw ? JSON.parse(raw) : {};
-    cache = { value: parsed, expiresAt: Date.now() + TTL_MS };
-    return parsed;
-  } catch (err) {
-    if (err instanceof ResourceNotFoundException) {
-      cache = { value: null, expiresAt: Date.now() + TTL_MS };
-      return null;
-    }
-    throw err;
-  }
+  const raw = await readRawSecret();
+  const value =
+    raw?.[SECRET_KEY] && typeof raw[SECRET_KEY] === "object"
+      ? (raw[SECRET_KEY] as Record<string, unknown>)
+      : {};
+  cache = { value, expiresAt: Date.now() + TTL_MS };
+  return value;
 }
 
-export async function putSecret(value: SecretRecord): Promise<void> {
-  const SecretString = JSON.stringify(value);
-  try {
-    await getClient().send(
-      new PutSecretValueCommand({ SecretId: SECRET_NAME, SecretString }),
-    );
-  } catch (err) {
-    if (err instanceof ResourceNotFoundException) {
-      await getClient().send(
-        new CreateSecretCommand({ Name: SECRET_NAME, SecretString }),
-      );
-    } else {
-      throw err;
-    }
-  }
+export async function putSecret(value: Record<string, unknown>): Promise<void> {
+  const raw = await readRawSecret();
+  await writeRawSecret({ ...raw, [SECRET_KEY]: value });
   cache = { value, expiresAt: Date.now() + TTL_MS };
 }

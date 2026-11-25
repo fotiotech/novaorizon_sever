@@ -37,6 +37,16 @@ export interface IRelatedProduct {
  * `strict: false` and reads go through a `serialize()` helper that
  * returns `any`. This keeps mongoose 9's typed Schema happy.
  */
+export interface IProductStats {
+  views: number;
+  cartAdds: number;
+  purchases: number;
+  likes: number;
+  revenue: number;
+  wishlistCount: number;
+  lastEventAt?: Date | null;
+}
+
 export interface IProduct {
   productCode: IProductCode | null;
   name: string;
@@ -60,7 +70,14 @@ export interface IProduct {
   variants: IVariant[];
   carrier?: Types.ObjectId | null;
   relatedProducts: IRelatedProduct[];
+  /** Active offers that include this product (synced by the offer service). */
+  offerIds: Types.ObjectId[];
   reviewsRatings: IReview[];
+  /** Cached review aggregate, refreshed on save. */
+  ratingAverage: number;
+  ratingCount: number;
+  /** Denormalised event counters used by merchandising rules. */
+  stats: IProductStats;
   tags: string[];
   status: ProductStatus;
 
@@ -145,7 +162,19 @@ const ProductSchema = new Schema(
       ],
       default: [],
     },
+    offerIds: [{ type: Schema.Types.ObjectId, ref: "Offer" }],
     reviewsRatings: { type: [ReviewSchema], default: [] },
+    ratingAverage: { type: Number, default: 0, min: 0, max: 5 },
+    ratingCount: { type: Number, default: 0, min: 0 },
+    stats: {
+      views: { type: Number, default: 0, min: 0 },
+      cartAdds: { type: Number, default: 0, min: 0 },
+      purchases: { type: Number, default: 0, min: 0 },
+      likes: { type: Number, default: 0, min: 0 },
+      revenue: { type: Number, default: 0, min: 0 },
+      wishlistCount: { type: Number, default: 0, min: 0 },
+      lastEventAt: { type: Date, default: null },
+    },
     tags: { type: [String], default: [] },
     status: {
       type: String,
@@ -184,6 +213,15 @@ ProductSchema.pre("save", function (this: any) {
   if (this.isModified("name") || !this.name_autocomplete) {
     this.name_autocomplete = this.name;
   }
+
+  // Keep the cached review aggregate in step with the embedded reviews.
+  const reviews = Array.isArray(this.reviewsRatings) ? this.reviewsRatings : [];
+  this.ratingCount = reviews.length;
+  this.ratingAverage =
+    reviews.length > 0
+      ? reviews.reduce((sum: number, r: any) => sum + (Number(r.rating) || 0), 0) /
+        reviews.length
+      : 0;
 });
 
 ProductSchema.pre("findOneAndUpdate", function (this: any) {
@@ -206,6 +244,9 @@ ProductSchema.index({ isTrending: 1, trendingRank: 1 });
 ProductSchema.index({ isBestseller: 1, bestsellerRank: 1 });
 ProductSchema.index({ isFeatured: 1, createdAt: -1 });
 ProductSchema.index({ newArrival: 1, createdAt: -1 });
+ProductSchema.index({ offerIds: 1 });
+ProductSchema.index({ ratingAverage: -1, ratingCount: -1 });
+ProductSchema.index({ "stats.purchases": -1 });
 
 const Product: ProductModel =
   (mongoose.models.Product as ProductModel | undefined) ??

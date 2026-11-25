@@ -22,7 +22,8 @@ function read(name: string, fallback = ""): string {
   return process.env[name] ?? fallback;
 }
 
-export const env = {
+function buildEnv() {
+  return {
   /* ------------------------------ Server ------------------------------ */
   nodeEnv: required("NODE_ENV", "development"),
   port: Number(required("PORT", "3000")),
@@ -81,7 +82,15 @@ export const env = {
   // Empty = forgot-password silently no-ops (safe) and campaigns fail
   // per-recipient with a ProviderError.
   resendApiKey: read("RESEND_API_KEY"),
-} as const;
+  } as const;
+}
+
+export const env = buildEnv();
+
+/** Recompute the cached config after a secrets update. */
+export function refreshEnv(): void {
+  Object.assign(env, buildEnv());
+}
 
 export const isProd = env.nodeEnv === "production";
 export const isDev = !isProd;

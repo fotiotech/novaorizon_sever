@@ -6,6 +6,7 @@ import {
   getPromotion,
   getPromotionOptions,
   getSelectablePromotions,
+  previewPromotionRules,
   listPromotions,
   syncProductPromotions,
   updatePromotion,
@@ -19,6 +20,7 @@ promotionRouter.use(requireAdmin);
 promotionRouter.get("/", asyncHandler(listPromotions));
 promotionRouter.post("/", asyncHandler(createPromotion));
 promotionRouter.get("/options", asyncHandler(getPromotionOptions));
+promotionRouter.post("/preview", asyncHandler(previewPromotionRules));
 promotionRouter.get("/selectable", asyncHandler(getSelectablePromotions));
 promotionRouter.get(
   "/by-product/:productId",
