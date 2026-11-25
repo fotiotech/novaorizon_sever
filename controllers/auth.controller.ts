@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import crypto from "node:crypto";
 import User from "../models/User.js";
+import Customer from "../models/Customer.js";
 import { connection } from "../config/db.js";
 import { env } from "../config/env.js";
 import {
@@ -10,6 +11,7 @@ import {
   ValidationError,
 } from "../middleware/error.middleware.js";
 import { SigninSchema, SignupSchema } from "../schemas/auth.schema.js";
+import { sendEmail } from "../utils/messaging/providers.js";
 import { signToken } from "../utils/jwt.js";
 import { consumeRateLimit, getClientIp } from "../utils/rate-limit.js";
 import type { AppRole } from "../types/auth.js";
@@ -175,6 +177,29 @@ export async function signup(req: Request, res: Response): Promise<void> {
     profileCompleted: false,
   }).save();
 
+  // Keep the customer directory in sync with the new account.
+  if (!isStaffRole) {
+    const parts = name.split(/\s+/).filter(Boolean);
+    try {
+      await Customer.updateOne(
+        { userId: user._id },
+        {
+          $setOnInsert: {
+            userId: user._id,
+            billingAddress: {
+              firstName: parts[0] ?? "Customer",
+              lastName: parts.slice(1).join(" ") || "Customer",
+              email,
+            },
+          },
+        },
+        { upsert: true },
+      );
+    } catch (error) {
+      console.error("[signup] customer profile creation failed", error);
+    }
+  }
+
   // 7. Branch response
   if (isStaffRole) {
     // Staff: do NOT auto-login. The staff member signs in separately.
@@ -191,8 +216,24 @@ export async function signup(req: Request, res: Response): Promise<void> {
   }
 
   // Customer: send verification email, auto-login
-  // TODO: import { sendEmail } from "../utils/messaging/providers.js";
-  // await sendEmail({ to: email, subject: "Verify your email", html: `...` });
+  const verificationUrl = `${env.frontendUrl.replace(/\/$/, "")}/verify?token=${verificationToken}`;
+  try {
+    await sendEmail({
+      to: email,
+      subject: "Verify your Novaorizon email",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+          <h2>Welcome to Novaorizon</h2>
+          <p>Confirm your email address to finish setting up your account.</p>
+          <p><a href="${verificationUrl}" style="display:inline-block;padding:12px 18px;background:#111;color:#fff;border-radius:8px;text-decoration:none">Verify email</a></p>
+          <p style="color:#666;font-size:12px">This link expires in 24 hours. If you did not create an account, ignore this email.</p>
+        </div>
+      `,
+      text: `Verify your email: ${verificationUrl}`,
+    });
+  } catch (error) {
+    console.error("[signup] verification email failed", error);
+  }
 
   const token = signToken(
     {

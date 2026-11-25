@@ -5,7 +5,7 @@ import { connection } from "../config/db.js";
 import { env } from "../config/env.js";
 import { ValidationError } from "../middleware/error.middleware.js";
 import { consumeRateLimit, getClientIp } from "../utils/rate-limit.js";
-import { Resend } from "resend";
+import { sendEmail } from "../utils/messaging/providers.js";
 
 const SUCCESS_MESSAGE = "If that account exists, a reset link has been sent!";
 
@@ -59,14 +59,24 @@ export async function forgotPassword(
       { $set: { resetPasswordToken: token, resetPasswordExpiry: expires } },
     );
 
-    const resetUrl = `${env.frontendUrl.replace(/\/$/, "")}/reset-password?token=${token}`;
+    const base =
+      user.role === "customer"
+        ? env.frontendUrl
+        : env.adminUrl || env.frontendUrl;
+    const resetUrl = `${base.replace(/\/$/, "")}/reset-password?token=${token}`;
 
-    const resend = new Resend(env.resendApiKey);
-    await resend.emails.send({
-      from: "Novaorizon Security <onboarding@resend.dev>",
+    await sendEmail({
       to: email,
-      subject: "Reset your password",
-      html: `<p>You requested a password reset. Click <a href="${resetUrl}">here</a> to choose a new password. This link expires in 1 hour.</p>`,
+      subject: "Reset your Novaorizon password",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+          <h2>Reset your password</h2>
+          <p>We received a request to reset your Novaorizon password.</p>
+          <p><a href="${resetUrl}" style="display:inline-block;padding:12px 18px;background:#111;color:#fff;border-radius:8px;text-decoration:none">Choose a new password</a></p>
+          <p style="color:#666;font-size:12px">This link expires in 1 hour. If you did not request a reset, ignore this email.</p>
+        </div>
+      `,
+      text: `Reset your password: ${resetUrl}`,
     });
 
     respond();

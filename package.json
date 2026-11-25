@@ -8,6 +8,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test --test-isolation=none tests/*.test.ts",
+    "test:checkout": "npm run build && node --test --test-isolation=none tests/checkout.test.mjs",
     "test:build": "node scripts/verify-build.mjs",
     "typecheck:prod": "tsc -p tsconfig.build.json --noEmit"
   },

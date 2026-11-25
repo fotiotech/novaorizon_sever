@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import crypto from "node:crypto";
-import { Resend } from "resend";
+import { sendEmail } from "../utils/messaging/providers.js";
 import User from "../models/User.js";
 import { connection } from "../config/db.js";
 import { env } from "../config/env.js";
@@ -85,14 +85,24 @@ export async function resendVerification(
       { $set: { verificationToken: token, tokenExpiry: expires } },
     );
 
-    const verificationUrl = `${env.frontendUrl.replace(/\/$/, "")}/verify?token=${token}`;
+    const base =
+      user.role === "customer"
+        ? env.frontendUrl
+        : env.adminUrl || env.frontendUrl;
+    const verificationUrl = `${base.replace(/\/$/, "")}/verify?token=${token}`;
 
-    const resend = new Resend(env.resendApiKey);
-    await resend.emails.send({
-      from: "Novaorizon <onboarding@resend.dev>",
+    await sendEmail({
       to: email,
-      subject: "Verify your email",
-      html: `<p>Confirm your address by clicking <a href="${verificationUrl}">this link</a>. It expires in 1 hour.</p>`,
+      subject: "Verify your Novaorizon email",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+          <h2>Verify your email</h2>
+          <p>Confirm your address to finish setting up your Novaorizon account.</p>
+          <p><a href="${verificationUrl}" style="display:inline-block;padding:12px 18px;background:#111;color:#fff;border-radius:8px;text-decoration:none">Verify email</a></p>
+          <p style="color:#666;font-size:12px">This link expires in 1 hour.</p>
+        </div>
+      `,
+      text: `Verify your email: ${verificationUrl}`,
     });
 
     respond();

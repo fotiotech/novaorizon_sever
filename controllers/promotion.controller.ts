@@ -149,8 +149,8 @@ export async function getPromotionOptions(
         .lean(),
       Category.find().select("name _id slug").sort({ name: 1 }).lean(),
       Brand.find().select("name _id url_slug").sort({ name: 1 }).lean(),
-      Offer.find({ isActive: true })
-        .select("name type discountValue conditions.endDate")
+      Offer.find({ isActive: { $ne: false } })
+        .select("name type discountValue conditions.endDate isActive")
         .sort({ createdAt: -1 })
         .lean(),
       Collection.find().select("name _id").sort({ name: 1 }).lean(),

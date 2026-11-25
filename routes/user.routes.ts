@@ -1,6 +1,8 @@
 import { Router } from "express";
 import {
   getUserById,
+  createUser,
+  deleteUser,
   getMe,
   listUsers,
   updateMe,
@@ -13,9 +15,11 @@ export const userRouter = Router();
 
 // Static routes must come before parameterised ones
 userRouter.get("/", requireAdmin, asyncHandler(listUsers));
+userRouter.post("/", requireAdmin, asyncHandler(createUser));
 userRouter.get("/me", requireUser, asyncHandler(getMe));
 userRouter.patch("/me", requireUser, asyncHandler(updateMe));
 
 // Admin-only per-user routes
 userRouter.patch("/:id/role", requireAdmin, asyncHandler(updateUserRole));
 userRouter.get("/:id", requireAdmin, asyncHandler(getUserById));
+userRouter.delete("/:id", requireAdmin, asyncHandler(deleteUser));

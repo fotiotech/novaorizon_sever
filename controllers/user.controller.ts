@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import User from "../models/User.js";
+import Customer from "../models/Customer.js";
 import { connection } from "../config/db.js";
 import { AppError } from "../middleware/error.middleware.js";
 import { AuthRequest } from "../types/auth.js";
@@ -61,18 +62,112 @@ export async function updateUserRole(
 
 /* --------------------------- GET /api/users (admin) ----------------------- */
 
+function serializeUser(user: any) {
+  return {
+    _id: String(user._id),
+    name: user.name ?? null,
+    email: user.email ?? null,
+    image: user.image ?? null,
+    phone: user.phone ?? null,
+    role: user.role ?? "customer",
+    status: user.status ?? "pending",
+    isVerified: Boolean(user.isVerified),
+    emailVerified: user.emailVerified ?? null,
+    lastActive: user.lastActive ?? user.updatedAt ?? null,
+    createdAt: user.createdAt ?? null,
+    updatedAt: user.updatedAt ?? null,
+  };
+}
+
 export async function listUsers(_req: Request, res: Response): Promise<void> {
   await connection();
-  const users = await User.find().lean();
+  const users = await User.find()
+    .select(
+      "name email image phone role status isVerified emailVerified lastActive createdAt updatedAt",
+    )
+    .sort({ createdAt: -1 })
+    .lean();
 
-  res.json({
-    data: users.map((u) => ({
-      ...u,
-      _id: u._id.toString(),
-      createdAt: u.createdAt?.toISOString?.() ?? null,
-      updatedAt: u.updatedAt?.toISOString?.() ?? null,
-    })),
-  });
+  res.json({ data: users.map(serializeUser) });
+}
+
+/* --------------------------- POST /api/users (admin) --------------------- */
+
+export async function createUser(req: Request, res: Response): Promise<void> {
+  await connection();
+  const name = String(req.body?.name ?? "").trim();
+  const email = String(req.body?.email ?? "").trim().toLowerCase();
+  const password = String(req.body?.password ?? "");
+  const role = String(req.body?.role ?? "customer");
+
+  if (!name) throw new AppError("Name is required", 400);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AppError("A valid email is required", 400);
+  }
+  if (password.length < 8) {
+    throw new AppError("Password must be at least 8 characters", 400);
+  }
+  if (!ALLOWED_ROLES.includes(role as AllowedRole)) {
+    throw new AppError("Invalid role", 400);
+  }
+
+  const existing = await User.findOne({ email }).select("_id").lean();
+  if (existing) throw new AppError("Email is already registered", 409);
+
+  const user = await new User({
+    name,
+    email,
+    password,
+    role,
+    status: "active",
+    isVerified: true,
+    emailVerified: new Date(),
+    profileCompleted: false,
+  }).save();
+
+  // Keep the customer directory in sync with new accounts.
+  if (role === "customer") {
+    const parts = name.split(/\s+/).filter(Boolean);
+    const firstName = parts[0] ?? "Customer";
+    const lastName = parts.slice(1).join(" ") || "Customer";
+    try {
+      await Customer.updateOne(
+        { userId: user._id },
+        {
+          $setOnInsert: {
+            userId: user._id,
+            billingAddress: {
+              firstName,
+              lastName,
+              email,
+            },
+          },
+        },
+        { upsert: true },
+      );
+    } catch (error) {
+      console.error("[users] customer profile creation failed", error);
+    }
+  }
+
+  res.status(201).json({ data: serializeUser(user.toObject()) });
+}
+
+/* ------------------------- DELETE /api/users/:id (admin) ------------------ */
+
+export async function deleteUser(req: Request, res: Response): Promise<void> {
+  await connection();
+  const id = String(req.params.id ?? "");
+  const actor = (req as AuthRequest).user!;
+  if (actor.id === id) {
+    throw new AppError("You cannot delete your own account.", 400);
+  }
+
+  const user = await User.findByIdAndDelete(id);
+  if (!user) throw new AppError("User not found", 404);
+
+  await Customer.deleteOne({ userId: user._id });
+  res.json({ success: true });
 }
 
 /* ------------------------ GET /api/users/:id (admin) ---------------------- */

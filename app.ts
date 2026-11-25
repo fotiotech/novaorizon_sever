@@ -34,6 +34,13 @@ export function createApp() {
 
   app.use(env.apiPrefix, apiRouter);
 
+  // Old transactional emails pointed at the API host. Forward those paths to
+  // the storefront so reset/verification links keep working.
+  app.get(["/reset-password", "/verify"], (req, res) => {
+    const origin = env.frontendUrl.replace(/\/$/, "");
+    res.redirect(302, `${origin}${req.originalUrl}`);
+  });
+
   app.use(notFoundHandler);
   app.use(errorHandler);
 

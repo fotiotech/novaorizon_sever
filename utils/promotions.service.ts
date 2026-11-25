@@ -367,7 +367,7 @@ function calcBundleDiscount(promotion: any, cart: Cart): number {
   return Math.min(discountAmount, cart.subtotal);
 }
 
-function calculateDiscount(
+export function calculateDiscount(
   promotion: any,
   cart: Cart,
   scopeCtx?: ScopeContext,

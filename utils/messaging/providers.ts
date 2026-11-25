@@ -30,7 +30,7 @@ export class ProviderError extends Error {
 
 async function sendViaResend(input: SendEmailInput): Promise<SendResult> {
   const apiKey = env.resendApiKey;
-  const from = process.env.EMAIL_FROM;
+  const from = env.emailFrom;
   if (!apiKey) throw new ProviderError("RESEND_API_KEY is not set", "resend");
   if (!from) throw new ProviderError("EMAIL_FROM is not set", "resend");
 
