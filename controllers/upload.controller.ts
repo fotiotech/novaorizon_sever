@@ -4,7 +4,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
 import { env } from "../config/env.js";
 import { ValidationError } from "../middleware/error.middleware.js";
-import { deleteS3Object } from "../utils/s3.js";
+import { deleteS3Object, s3Credentials } from "../utils/s3.js";
 
 /**
  * `memoryStorage` — file lives in RAM, we upload directly to S3.
@@ -21,10 +21,7 @@ function getS3Client(): S3Client {
   if (!_s3Client) {
     _s3Client = new S3Client({
       region: env.awsRegion,
-      credentials: {
-        accessKeyId: env.awsAccessKeyId,
-        secretAccessKey: env.awsSecretAccessKey,
-      },
+      credentials: s3Credentials(),
     });
   }
   return _s3Client;

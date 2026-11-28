@@ -1,0 +1,51 @@
+name: Deploy API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "**"
+      - ".github/workflows/deploy.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: novaorizon-api
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      AWS_ECR_REGISTRY: ${{ vars.AWS_ECR_REGISTRY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'default' }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE_API || 'novaorizon-api' }}
+      IMAGE_NAME: novaorizon-api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build and deploy
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$AWS_ECR_REGISTRY"
+
+          docker build -t "$IMAGE_NAME" .
+          docker tag "$IMAGE_NAME" "$AWS_ECR_REGISTRY/$IMAGE_NAME:latest"
+          docker push "$AWS_ECR_REGISTRY/$IMAGE_NAME:latest"
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --force-new-deployment \
+            --region "$AWS_REGION"

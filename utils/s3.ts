@@ -7,14 +7,25 @@ export function resetS3Client(): void {
   _s3Client = null;
 }
 
+/**
+ * Static keys are optional. When absent, the SDK uses its default provider
+ * chain (ECS task role, EC2 instance profile, environment, etc.).
+ */
+export function s3Credentials() {
+  if (env.awsAccessKeyId && env.awsSecretAccessKey) {
+    return {
+      accessKeyId: env.awsAccessKeyId,
+      secretAccessKey: env.awsSecretAccessKey,
+    };
+  }
+  return undefined;
+}
+
 function getS3Client(): S3Client {
   if (!_s3Client) {
     _s3Client = new S3Client({
       region: env.awsRegion,
-      credentials: {
-        accessKeyId: env.awsAccessKeyId,
-        secretAccessKey: env.awsSecretAccessKey,
-      },
+      credentials: s3Credentials(),
     });
   }
   return _s3Client;
@@ -29,7 +40,7 @@ function getS3Client(): S3Client {
  */
 export async function deleteS3Object(urlOrKey: string): Promise<void> {
   if (!urlOrKey) return;
-  if (!env.awsRegion || !env.awsBucketName || !env.awsAccessKeyId) {
+  if (!env.awsRegion || !env.awsBucketName) {
     console.warn(`[s3] AWS not configured — skipping delete for ${urlOrKey}`);
     return;
   }
